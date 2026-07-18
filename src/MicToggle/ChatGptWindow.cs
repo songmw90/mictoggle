@@ -113,6 +113,14 @@ internal sealed class ChatGptWindow : Form
     {
         Interval = 1000,
     };
+    private readonly ChatGptVoiceSessionHealth _voiceSessionHealth = new(
+        disconnectedGraceMilliseconds: 5000,
+        heartbeatStaleMilliseconds: 3000,
+        recoveryCooldownMilliseconds: 10000);
+    private readonly System.Windows.Forms.Timer _voiceHealthTimer = new()
+    {
+        Interval = 1000,
+    };
 
     private ChatGptVoiceModeAutoStarter _voiceModeAutoStarter = new();
     private WebView2? _webView;
@@ -152,6 +160,7 @@ internal sealed class ChatGptWindow : Form
         _retryButton.Click += async (_, _) => await RetryWebViewInitializationAsync();
         _outputVolumeSlider.ValueChanged += HandleOutputVolumeChanged;
         _audioVolumeRefreshTimer.Tick += HandleAudioVolumeRefresh;
+        _voiceHealthTimer.Tick += HandleVoiceHealthTick;
         FormClosing += HandleFormClosing;
         Shown += async (_, _) =>
         {
@@ -163,6 +172,7 @@ internal sealed class ChatGptWindow : Form
 
         SetStatus("Starting ChatGPT...");
         _audioVolumeRefreshTimer.Start();
+        _voiceHealthTimer.Start();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -177,6 +187,8 @@ internal sealed class ChatGptWindow : Form
         {
             _audioVolumeRefreshTimer.Stop();
             _audioVolumeRefreshTimer.Dispose();
+            _voiceHealthTimer.Stop();
+            _voiceHealthTimer.Dispose();
             TrySaveOutputVolume(reportErrors: false);
             _toolTip.Dispose();
             if (_windowIcon is not null)
@@ -321,7 +333,13 @@ internal sealed class ChatGptWindow : Form
     {
         _microphoneStateHost.SetEnabled(enabled);
         _state.SetDesiredMicrophoneEnabled(enabled);
-        return DrainMicrophoneStateAsync();
+        var drainTask = DrainMicrophoneStateAsync();
+        if (enabled)
+        {
+            _ = RunOnUiThreadAsync(TryRecoverVoiceModeFromPushAsync);
+        }
+
+        return drainTask;
     }
 
     public void ShowWindow()
@@ -577,6 +595,10 @@ internal sealed class ChatGptWindow : Form
             _backButton.Enabled = _webView?.CoreWebView2?.CanGoBack == true;
             var core = _webView?.CoreWebView2;
             _state.CompleteNavigation();
+            if (args.IsSuccess)
+            {
+                _voiceSessionHealth.Reset(Environment.TickCount64);
+            }
 
             var failureStatus = args.IsSuccess
                 ? null
@@ -979,6 +1001,100 @@ internal sealed class ChatGptWindow : Form
         }
     }
 
+    private Task TryRecoverVoiceModeFromPushAsync()
+    {
+        var core = GetVoiceRecoveryCore();
+        if (core is null
+            || !_voiceSessionHealth.TryBeginPushRecovery(Environment.TickCount64))
+        {
+            return Task.CompletedTask;
+        }
+
+        return RecoverVoiceModeAsync(core);
+    }
+
+    private async void HandleVoiceHealthTick(object? sender, EventArgs args)
+    {
+        var core = GetVoiceRecoveryCore();
+        if (core is null
+            || !_voiceSessionHealth.TryBeginScheduledRecovery(Environment.TickCount64))
+        {
+            return;
+        }
+
+        await RecoverVoiceModeAsync(core);
+    }
+
+    private CoreWebView2? GetVoiceRecoveryCore()
+    {
+        if (IsDisposed
+            || Disposing
+            || _state.NavigationInProgress
+            || !_state.BridgeCommandsAvailable)
+        {
+            return null;
+        }
+
+        var webView = _webView;
+        var core = webView?.CoreWebView2;
+        return webView is not null
+            && !webView.IsDisposed
+            && core is not null
+            && ChatGptOriginPolicy.AllowsMicrophone(core.Source)
+                ? core
+                : null;
+    }
+
+    private bool IsCurrentVoiceCore(CoreWebView2 core)
+    {
+        var webView = _webView;
+        return !IsDisposed
+            && !Disposing
+            && webView is not null
+            && !webView.IsDisposed
+            && ReferenceEquals(webView.CoreWebView2, core)
+            && !_state.NavigationInProgress
+            && ChatGptOriginPolicy.AllowsMicrophone(core.Source);
+    }
+
+    private async Task RecoverVoiceModeAsync(CoreWebView2 core)
+    {
+        try
+        {
+            var starter = _voiceModeAutoStarter;
+            if (!IsCurrentVoiceCore(core) || !starter.Rearm())
+            {
+                return;
+            }
+
+            SetStatus("Restoring voice mode...");
+            var stopResult = await core.ExecuteScriptAsync(
+                ChatGptVoiceModeAutoStarter.TryStopScript);
+            if (ChatGptVoiceModeAutoStarter.DidStop(stopResult))
+            {
+                await Task.Delay(500);
+            }
+
+            if (!IsCurrentVoiceCore(core))
+            {
+                return;
+            }
+
+            await TryAutoStartVoiceModeAsync(core);
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrentVoiceCore(core))
+            {
+                SetStatus($"Voice mode recovery failed: {ex.Message}");
+            }
+        }
+        finally
+        {
+            _voiceSessionHealth.CompleteRecovery(Environment.TickCount64);
+        }
+    }
+
     private void DetachWebViewEvents(WebView2 webView)
     {
         var core = webView.CoreWebView2;
@@ -1025,7 +1141,18 @@ internal sealed class ChatGptWindow : Form
             && trackCountProperty.TryGetInt32(out var parsedTrackCount)
                 ? parsedTrackCount
                 : 0;
-        SetStatus(ChatGptWindowState.FormatMicrophoneStatus(enabled, trackCount));
+        var bridgeId = root.TryGetProperty("bridgeId", out var bridgeIdProperty)
+            && bridgeIdProperty.ValueKind == JsonValueKind.String
+                ? bridgeIdProperty.GetString()
+                : null;
+        var activeTrackCount = _voiceSessionHealth.Observe(
+            string.IsNullOrWhiteSpace(bridgeId) ? "legacy" : bridgeId,
+            trackCount,
+            Environment.TickCount64);
+        if (!_voiceSessionHealth.RecoveryInProgress)
+        {
+            SetStatus(ChatGptWindowState.FormatMicrophoneStatus(enabled, activeTrackCount));
+        }
     }
 
     private void GoBack()
@@ -1162,7 +1289,8 @@ internal sealed class ChatGptWindow : Form
 
         if (text.Contains("Starting", StringComparison.OrdinalIgnoreCase)
             || text.Contains("Loading", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Recovering", StringComparison.OrdinalIgnoreCase))
+            || text.Contains("Recovering", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Restoring", StringComparison.OrdinalIgnoreCase))
         {
             return BusyColor;
         }

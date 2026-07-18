@@ -14,6 +14,7 @@ subject to the [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/).
 
 - Hold `Left Ctrl + Alt` to talk; release either key to mute ChatGPT again.
 - Starts ChatGPT voice mode automatically when the page exposes the voice button.
+- Monitors the voice session and restores it when ChatGPT drops its microphone track.
 - Uses a dedicated WebView2 profile, so it does not control or depend on Chrome.
 - Controls only MicToggle's WebView audio volume, not the Windows master volume.
 - Runs in the notification area; double-click the tray icon to show the window.

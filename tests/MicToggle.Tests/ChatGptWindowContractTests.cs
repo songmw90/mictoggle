@@ -341,6 +341,63 @@ public sealed class ChatGptWindowContractTests
         Assert.True(originCheck >= 0 && originCheck < progress);
     }
 
+    [Fact]
+    public void Window_wires_voice_health_heartbeat_and_ptt_recovery()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "MicToggle",
+            "ChatGptWindow.cs"));
+
+        Assert.Contains(
+            "private readonly ChatGptVoiceSessionHealth _voiceSessionHealth = new(",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "private readonly System.Windows.Forms.Timer _voiceHealthTimer = new()",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains("_voiceHealthTimer.Tick += HandleVoiceHealthTick", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceHealthTimer.Start()", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceHealthTimer.Stop()", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceHealthTimer.Dispose()", source, StringComparison.Ordinal);
+
+        var setterStart = source.IndexOf(
+            "public Task SetMicrophoneEnabledAsync",
+            StringComparison.Ordinal);
+        var setterEnd = source.IndexOf("public void ShowWindow", setterStart, StringComparison.Ordinal);
+        Assert.True(setterStart >= 0 && setterEnd > setterStart);
+        var setter = source[setterStart..setterEnd];
+        Assert.Contains("TryRecoverVoiceModeFromPushAsync", setter, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Voice_recovery_rearms_before_cycling_an_unhealthy_session()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "MicToggle",
+            "ChatGptWindow.cs"));
+        var methodStart = source.IndexOf(
+            "private async Task RecoverVoiceModeAsync",
+            StringComparison.Ordinal);
+        var methodEnd = source.IndexOf(
+            "private void DetachWebViewEvents",
+            methodStart,
+            StringComparison.Ordinal);
+        Assert.True(methodStart >= 0 && methodEnd > methodStart);
+        var method = source[methodStart..methodEnd];
+
+        var rearm = method.IndexOf("starter.Rearm()", StringComparison.Ordinal);
+        var stop = method.IndexOf("ChatGptVoiceModeAutoStarter.TryStopScript", StringComparison.Ordinal);
+        var restart = method.IndexOf("TryAutoStartVoiceModeAsync(core)", StringComparison.Ordinal);
+        Assert.True(rearm >= 0 && rearm < stop && stop < restart);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

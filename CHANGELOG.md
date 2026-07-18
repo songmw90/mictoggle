@@ -2,6 +2,13 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.1 - 2026-07-19
+
+- Added per-document voice-session heartbeats.
+- Restores voice mode after the microphone track remains disconnected.
+- Lets a push-to-talk press recover a stale voice session immediately.
+- Avoids cycling healthy voice sessions and rate-limits recovery attempts.
+
 ## 0.1.0 - 2026-07-19
 
 - Initial public source layout.

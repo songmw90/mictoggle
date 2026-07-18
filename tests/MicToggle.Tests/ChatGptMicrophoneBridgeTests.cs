@@ -126,10 +126,7 @@ public sealed class ChatGptMicrophoneBridgeTests
                 get originalCalls() { return originalCalls; },
                 get originalThisMatches() { return originalThisMatches; },
                 evaluate(script) { return vm.runInContext(script, context); },
-                tick() { intervals.filter(interval => interval.delay === 50).forEach(interval => interval.callback()); },
-                tickDelay(delay) {
-                    intervals.filter(interval => interval.delay === delay).forEach(interval => interval.callback());
-                },
+                tick() { intervals.forEach(interval => interval.callback()); },
                 sendState(enabled) {
                     webMessageListeners.forEach(listener => listener({
                         data: { type: 'microphone-state', enabled }
@@ -154,15 +151,8 @@ public sealed class ChatGptMicrophoneBridgeTests
 
             assert.ok(topLevel.context.window.__micToggle, 'top-level ChatGPT bridge must install');
             assert.ok(childFrame.context.window.__micToggle, 'ChatGPT child-frame bridge must install');
-            assert.deepEqual(topLevel.intervals.map(value => value.delay), [50, 1000]);
-            assert.deepEqual(childFrame.intervals.map(value => value.delay), [50, 1000]);
-            const initialBridgeId = topLevel.messages.at(-1).bridgeId;
-            assert.equal(typeof initialBridgeId, 'string');
-            assert.ok(initialBridgeId.length > 0, 'status must identify its document bridge');
-            const initialMessageCount = topLevel.messages.length;
-            topLevel.tickDelay(1000);
-            assert.equal(topLevel.messages.length, initialMessageCount + 1);
-            assert.equal(topLevel.messages.at(-1).bridgeId, initialBridgeId);
+            assert.deepEqual(topLevel.intervals.map(value => value.delay), [50]);
+            assert.deepEqual(childFrame.intervals.map(value => value.delay), [50]);
 
             const wrappedGetUserMedia = topLevel.mediaDevices.getUserMedia;
             vm.runInContext(payload.initializationScript, topLevel.context);
@@ -170,7 +160,7 @@ public sealed class ChatGptMicrophoneBridgeTests
                 topLevel.mediaDevices.getUserMedia,
                 wrappedGetUserMedia,
                 'repeat installation must not double-wrap');
-            assert.equal(topLevel.intervals.length, 2, 'repeat installation must not add another poller');
+            assert.equal(topLevel.intervals.length, 1, 'repeat installation must not add another poller');
 
             const topTrack = createTrack();
             const frameTrack = createTrack();

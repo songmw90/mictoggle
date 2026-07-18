@@ -2,6 +2,12 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.2 - 2026-07-19
+
+- Replaced voice-track heartbeat recovery with a simple inactivity timer.
+- Restarts ChatGPT voice mode after 10 minutes without push-to-talk activity.
+- Resets the 10-minute timer on every push-to-talk press or release.
+
 ## 0.1.1 - 2026-07-19
 
 - Added per-document voice-session heartbeats.

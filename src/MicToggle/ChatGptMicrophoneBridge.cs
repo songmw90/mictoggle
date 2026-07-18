@@ -14,7 +14,6 @@ internal static class ChatGptMicrophoneBridge
             }
 
             const tracks = new Set();
-            const bridgeId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
             let enabled = false;
             let tearingDown = false;
             let nativeState = null;
@@ -32,7 +31,6 @@ internal static class ChatGptMicrophoneBridge
             };
             const postStatus = () => window.chrome?.webview?.postMessage({
                 type: "microphone-status",
-                bridgeId,
                 ...status()
             });
             const removeTrack = track => {
@@ -143,7 +141,6 @@ internal static class ChatGptMicrophoneBridge
             window.addEventListener("beforeunload", muteTracks);
             window.addEventListener("pageshow", resumeAfterPageShow);
             window.setInterval(pollHostState, 50);
-            window.setInterval(postStatus, 1000);
             postStatus();
             pollHostState();
         })();

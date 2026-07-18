@@ -342,7 +342,7 @@ public sealed class ChatGptWindowContractTests
     }
 
     [Fact]
-    public void Window_wires_voice_health_heartbeat_and_ptt_recovery()
+    public void Window_refreshes_voice_mode_after_ten_minutes_without_ptt_activity()
     {
         var repositoryRoot = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -352,25 +352,37 @@ public sealed class ChatGptWindowContractTests
             "ChatGptWindow.cs"));
 
         Assert.Contains(
-            "private readonly ChatGptVoiceSessionHealth _voiceSessionHealth = new(",
+            "private const int VoiceIdleRestartIntervalMilliseconds = 10 * 60 * 1000;",
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "private readonly System.Windows.Forms.Timer _voiceHealthTimer = new()",
+            "private readonly System.Windows.Forms.Timer _voiceIdleTimer = new()",
             source,
             StringComparison.Ordinal);
-        Assert.Contains("_voiceHealthTimer.Tick += HandleVoiceHealthTick", source, StringComparison.Ordinal);
-        Assert.Contains("_voiceHealthTimer.Start()", source, StringComparison.Ordinal);
-        Assert.Contains("_voiceHealthTimer.Stop()", source, StringComparison.Ordinal);
-        Assert.Contains("_voiceHealthTimer.Dispose()", source, StringComparison.Ordinal);
+        Assert.Contains("Interval = VoiceIdleRestartIntervalMilliseconds", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceIdleTimer.Tick += HandleVoiceIdleElapsed", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceIdleTimer.Stop()", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceIdleTimer.Dispose()", source, StringComparison.Ordinal);
 
-        var setterStart = source.IndexOf(
-            "public Task SetMicrophoneEnabledAsync",
+        var applyStart = source.IndexOf(
+            "private Task ApplyMicrophoneStateAsync",
             StringComparison.Ordinal);
-        var setterEnd = source.IndexOf("public void ShowWindow", setterStart, StringComparison.Ordinal);
-        Assert.True(setterStart >= 0 && setterEnd > setterStart);
-        var setter = source[setterStart..setterEnd];
-        Assert.Contains("TryRecoverVoiceModeFromPushAsync", setter, StringComparison.Ordinal);
+        var applyEnd = source.IndexOf("private Task RunOnUiThreadAsync", applyStart, StringComparison.Ordinal);
+        Assert.True(applyStart >= 0 && applyEnd > applyStart);
+        Assert.Contains("RestartVoiceIdleTimer()", source[applyStart..applyEnd], StringComparison.Ordinal);
+
+        var handlerStart = source.IndexOf(
+            "private async void HandleVoiceIdleElapsed",
+            StringComparison.Ordinal);
+        var handlerEnd = source.IndexOf(
+            "private CoreWebView2? GetVoiceRecoveryCore",
+            handlerStart,
+            StringComparison.Ordinal);
+        Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
+        var handler = source[handlerStart..handlerEnd];
+        Assert.Contains("_voiceIdleTimer.Stop()", handler, StringComparison.Ordinal);
+        Assert.Contains("await RecoverVoiceModeAsync(core)", handler, StringComparison.Ordinal);
+        Assert.Contains("RestartVoiceIdleTimer()", handler, StringComparison.Ordinal);
     }
 
     [Fact]

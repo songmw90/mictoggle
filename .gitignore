@@ -1,0 +1,14 @@
+.vs/
+bin/
+obj/
+artifacts/
+TestResults/
+*.user
+*.suo
+*.nupkg
+*.snupkg
+.env
+.env.*
+*.pfx
+*.p12
+*.snk

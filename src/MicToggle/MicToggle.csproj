@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>MicToggle</AssemblyName>
+    <Product>MicToggle</Product>
+    <Version>0.1.0</Version>
+    <Authors>Fantazm</Authors>
+    <Description>Push-to-talk control for ChatGPT voice mode on Windows.</Description>
+    <Copyright>Copyright (c) 2026 Fantazm</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <ApplicationIcon>Assets\MicToggle.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="NAudio.Wasapi" Version="2.3.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Assets\MicToggle.ico" CopyToOutputDirectory="Never" />
+    <None Update="Assets\MicToggle.png" CopyToOutputDirectory="Never" />
+    <None Update="Assets\MicToggle.svg" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+  <Target Name="RemoveWebView2WpfReferenceFromWinForms" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="$([System.IO.Path]::GetFileName('%(Reference.Identity)')) == 'Microsoft.Web.WebView2.Wpf.dll'" />
+      <ReferencePath Remove="@(ReferencePath)" Condition="$([System.IO.Path]::GetFileName('%(ReferencePath.Identity)')) == 'Microsoft.Web.WebView2.Wpf.dll'" />
+    </ItemGroup>
+  </Target>
+</Project>

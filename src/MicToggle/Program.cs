@@ -6,10 +6,11 @@ namespace MicToggle;
 internal static class Program
 {
     private const string SingleInstanceMutexName = @"Local\MicToggle.CtrlAltHoldMic";
+    private const string StartupArgument = "--startup";
     private const string WebView2LoaderFileName = "WebView2Loader.dll";
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         ConfigureWebView2Loader();
 
@@ -20,8 +21,14 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
-        Application.Run(new MicToggleAppContext());
+        Application.Run(new MicToggleAppContext(IsStartupLaunch(args)));
     }
+
+    private static bool IsStartupLaunch(string[] args) =>
+        args.Any(argument => string.Equals(
+            argument,
+            StartupArgument,
+            StringComparison.OrdinalIgnoreCase));
 
     private static void ConfigureWebView2Loader()
     {

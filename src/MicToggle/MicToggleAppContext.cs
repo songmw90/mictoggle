@@ -5,11 +5,12 @@ internal sealed class MicToggleAppContext : ApplicationContext
     private readonly NotifyIcon _trayIcon;
     private readonly Icon _trayIconAsset;
     private readonly CtrlAltHook _hook = new();
-    private readonly ChatGptWindow _window = new();
+    private readonly ChatGptWindow _window;
     private bool _isHolding;
 
-    public MicToggleAppContext()
+    public MicToggleAppContext(bool startHidden)
     {
+        _window = new ChatGptWindow(startHidden);
         var menu = new ContextMenuStrip();
         menu.Items.Add("Show MicToggle", null, (_, _) => _window.ShowWindow());
         menu.Items.Add(new ToolStripSeparator());

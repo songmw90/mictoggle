@@ -410,6 +410,84 @@ public sealed class ChatGptWindowContractTests
         Assert.True(rearm >= 0 && rearm < stop && stop < restart);
     }
 
+    [Fact]
+    public void Idle_refresh_mutes_output_around_the_dom_cycle_then_restores_current_volume()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "MicToggle",
+            "ChatGptWindow.cs"));
+        Assert.Contains(
+            "private const int VoiceRefreshMuteTailMilliseconds = 2000;",
+            source,
+            StringComparison.Ordinal);
+
+        var handlerStart = source.IndexOf(
+            "private async void HandleVoiceIdleElapsed",
+            StringComparison.Ordinal);
+        var handlerEnd = source.IndexOf(
+            "private void RestartVoiceIdleTimer",
+            handlerStart,
+            StringComparison.Ordinal);
+        Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
+        var handler = source[handlerStart..handlerEnd];
+
+        var mute = handler.IndexOf("_voiceRefreshMuted = true", StringComparison.Ordinal);
+        var forceZero = handler.IndexOf("ApplyOutputVolume(reportErrors: false)", mute, StringComparison.Ordinal);
+        var refresh = handler.IndexOf("await RecoverVoiceModeAsync(core)", forceZero, StringComparison.Ordinal);
+        var tail = handler.IndexOf("Task.Delay(VoiceRefreshMuteTailMilliseconds)", refresh, StringComparison.Ordinal);
+        var unmute = handler.IndexOf("_voiceRefreshMuted = false", tail, StringComparison.Ordinal);
+        var restore = handler.IndexOf("ApplyOutputVolume(reportErrors: false)", unmute, StringComparison.Ordinal);
+        Assert.True(mute >= 0
+            && mute < forceZero
+            && forceZero < refresh
+            && refresh < tail
+            && tail < unmute
+            && unmute < restore);
+
+        var applyStart = source.IndexOf(
+            "private void ApplyOutputVolume",
+            StringComparison.Ordinal);
+        var applyEnd = source.IndexOf(
+            "private void TrySaveOutputVolume",
+            applyStart,
+            StringComparison.Ordinal);
+        Assert.True(applyStart >= 0 && applyEnd > applyStart);
+        Assert.Contains(
+            "var volumePercent = _voiceRefreshMuted ? 0 : _outputVolumeSlider.Value",
+            source[applyStart..applyEnd],
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Startup_launch_initializes_invisibly_then_remains_available_from_the_tray()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "MicToggle",
+            "ChatGptWindow.cs"));
+
+        Assert.Contains("public ChatGptWindow(bool startHidden = false)", source, StringComparison.Ordinal);
+        Assert.Contains("Opacity = 0", source, StringComparison.Ordinal);
+        Assert.Contains("ShowInTaskbar = false", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "protected override bool ShowWithoutActivation => _hideAfterStartupInitialization;",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains("Hide()", source, StringComparison.Ordinal);
+
+        var showStart = source.IndexOf("public void ShowWindow()", StringComparison.Ordinal);
+        var showEnd = source.IndexOf("public void ExitApplication()", showStart, StringComparison.Ordinal);
+        Assert.True(showStart >= 0 && showEnd > showStart);
+        var showWindow = source[showStart..showEnd];
+        Assert.Contains("Opacity = 1", showWindow, StringComparison.Ordinal);
+        Assert.Contains("ShowInTaskbar = true", showWindow, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -2,6 +2,11 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.3 - 2026-07-19
+
+- Mutes MicToggle output during the 10-minute idle Voice refresh and restores the current volume two seconds afterward.
+- Added `--startup` mode, which initializes ChatGPT invisibly and remains in the notification area.
+
 ## 0.1.2 - 2026-07-19
 
 - Replaced voice-track heartbeat recovery with a simple inactivity timer.

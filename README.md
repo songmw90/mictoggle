@@ -18,6 +18,7 @@ subject to the [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/).
 - Uses a dedicated WebView2 profile, so it does not control or depend on Chrome.
 - Controls only MicToggle's WebView audio volume, not the Windows master volume.
 - Runs in the notification area; double-click the tray icon to show the window.
+- Supports `--startup` to initialize directly in the notification area without showing the window.
 - Closing the window hides it. Use the tray menu's `Exit` command to quit.
 - Does not suppress the hotkey or block normal keyboard input.
 
@@ -41,7 +42,8 @@ show a warning. Verify that the archive came from the expected repository and
 check it against the published `.sha256` file before running it.
 
 MicToggle does not install itself or create a startup entry. To start it with
-Windows, place a shortcut to `MicToggle.exe` in `shell:startup`.
+Windows directly in the notification area, place a shortcut to
+`MicToggle.exe --startup` in `shell:startup`.
 
 ## Privacy and security
 

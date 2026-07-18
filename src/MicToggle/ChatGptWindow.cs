@@ -16,6 +16,7 @@ internal sealed class ChatGptWindow : Form
     private const int VoiceModeStartAttempts = 40;
     private const int VoiceModeStartRetryDelayMilliseconds = 250;
     private const int VoiceIdleRestartIntervalMilliseconds = 10 * 60 * 1000;
+    private const int VoiceRefreshMuteTailMilliseconds = 2000;
 
     private static readonly Color WindowBackground = Color.FromArgb(17, 19, 21);
     private static readonly Color HeaderBackground = Color.FromArgb(24, 26, 29);
@@ -122,9 +123,12 @@ internal sealed class ChatGptWindow : Form
     private ChatGptVoiceModeAutoStarter _voiceModeAutoStarter = new();
     private WebView2? _webView;
     private bool _allowClose;
+    private bool _hideAfterStartupInitialization;
+    private bool _voiceRefreshMuted;
 
-    public ChatGptWindow()
+    public ChatGptWindow(bool startHidden = false)
     {
+        _hideAfterStartupInitialization = startHidden;
         Text = "MicToggle";
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(1050, 760);
@@ -133,6 +137,12 @@ internal sealed class ChatGptWindow : Form
         BackColor = WindowBackground;
         ForeColor = PrimaryText;
         Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+        if (startHidden)
+        {
+            Opacity = 0;
+            ShowInTaskbar = false;
+        }
+
         _windowIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         if (_windowIcon is not null)
         {
@@ -165,6 +175,14 @@ internal sealed class ChatGptWindow : Form
             {
                 await InitializeWebViewAsync(_webView);
             }
+
+            if (_hideAfterStartupInitialization)
+            {
+                _hideAfterStartupInitialization = false;
+                Hide();
+                Opacity = 1;
+                ShowInTaskbar = true;
+            }
         };
 
         SetStatus("Starting ChatGPT...");
@@ -177,6 +195,8 @@ internal sealed class ChatGptWindow : Form
         base.OnHandleCreated(e);
         WindowTheme.ApplyDarkTitleBar(Handle);
     }
+
+    protected override bool ShowWithoutActivation => _hideAfterStartupInitialization;
 
     protected override void Dispose(bool disposing)
     {
@@ -340,6 +360,9 @@ internal sealed class ChatGptWindow : Form
             return;
         }
 
+        _hideAfterStartupInitialization = false;
+        Opacity = 1;
+        ShowInTaskbar = true;
         Show();
         if (WindowState == FormWindowState.Minimized)
         {
@@ -992,16 +1015,27 @@ internal sealed class ChatGptWindow : Form
     private async void HandleVoiceIdleElapsed(object? sender, EventArgs args)
     {
         _voiceIdleTimer.Stop();
+        var mutedForRefresh = false;
         try
         {
             var core = GetVoiceRecoveryCore();
             if (core is not null)
             {
+                _voiceRefreshMuted = true;
+                mutedForRefresh = true;
+                ApplyOutputVolume(reportErrors: false);
                 await RecoverVoiceModeAsync(core);
+                await Task.Delay(VoiceRefreshMuteTailMilliseconds);
             }
         }
         finally
         {
+            if (mutedForRefresh)
+            {
+                _voiceRefreshMuted = false;
+                ApplyOutputVolume(reportErrors: false);
+            }
+
             RestartVoiceIdleTimer();
         }
     }
@@ -1187,7 +1221,7 @@ internal sealed class ChatGptWindow : Form
     {
         try
         {
-            var volumePercent = _outputVolumeSlider.Value;
+            var volumePercent = _voiceRefreshMuted ? 0 : _outputVolumeSlider.Value;
             var core = _webView?.CoreWebView2;
             if (core is not null)
             {

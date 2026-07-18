@@ -2,7 +2,7 @@
 
 All notable changes to MicToggle will be documented in this file.
 
-## 0.1.0 - Unreleased
+## 0.1.0 - 2026-07-19
 
 - Initial public source layout.
 - Push-to-talk microphone control for ChatGPT voice mode.

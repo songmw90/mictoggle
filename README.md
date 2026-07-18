@@ -29,7 +29,8 @@ subject to the [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/).
 
 ## Install
 
-1. Download the `MicToggle-win-x64.zip` artifact.
+1. Download `MicToggle-win-x64.zip` and its `.sha256` file from the
+   [latest GitHub release](https://github.com/songmw90/mictoggle/releases/latest).
 2. Extract the archive to a normal local folder.
 3. Run `MicToggle.exe` and sign in to ChatGPT in the MicToggle window.
 4. Hold `Left Ctrl + Alt` while speaking.

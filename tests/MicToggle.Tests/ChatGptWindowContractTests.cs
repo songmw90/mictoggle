@@ -342,7 +342,7 @@ public sealed class ChatGptWindowContractTests
     }
 
     [Fact]
-    public void Window_refreshes_voice_mode_after_ten_minutes_without_ptt_activity()
+    public void Window_refreshes_voice_mode_after_five_minutes_without_ptt_activity()
     {
         var repositoryRoot = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -352,7 +352,7 @@ public sealed class ChatGptWindowContractTests
             "ChatGptWindow.cs"));
 
         Assert.Contains(
-            "private const int VoiceIdleRestartIntervalMilliseconds = 10 * 60 * 1000;",
+            "private const int VoiceIdleRestartIntervalMilliseconds = 5 * 60 * 1000;",
             source,
             StringComparison.Ordinal);
         Assert.Contains(

@@ -15,7 +15,7 @@ internal sealed class ChatGptWindow : Form
     private const string MutedVolumeGlyph = "\uE74F";
     private const int VoiceModeStartAttempts = 40;
     private const int VoiceModeStartRetryDelayMilliseconds = 250;
-    private const int VoiceIdleRestartIntervalMilliseconds = 10 * 60 * 1000;
+    private const int VoiceIdleRestartIntervalMilliseconds = 5 * 60 * 1000;
     private const int VoiceRefreshMuteTailMilliseconds = 2000;
 
     private static readonly Color WindowBackground = Color.FromArgb(17, 19, 21);

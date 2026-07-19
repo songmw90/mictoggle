@@ -1,4 +1,7 @@
+using System.Diagnostics;
 using System.Reflection;
+using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace MicToggle.Tests;
@@ -92,19 +95,45 @@ public sealed class ChatGptVoiceModeAutoStarterTests
     }
 
     [Fact]
-    public void Recovery_script_only_clicks_an_active_voice_end_button()
+    public void Recovery_scripts_handle_live_voice_end_and_loading_cancel_states()
     {
         var type = RequireStarterType();
-        var property = type.GetProperty(
+        var stopProperty = type.GetProperty(
             "TryStopScript",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(property);
-        var script = Assert.IsType<string>(property!.GetValue(null));
+        var readyProperty = type.GetProperty(
+            "ReadyToStartScript",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(stopProperty);
+        Assert.NotNull(readyProperty);
+        var stopScript = Assert.IsType<string>(stopProperty!.GetValue(null));
+        var readyScript = Assert.IsType<string>(readyProperty!.GetValue(null));
 
-        Assert.Contains("voice", script, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("끝내기", script, StringComparison.Ordinal);
-        Assert.Contains("dictation", script, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("button.click()", script, StringComparison.Ordinal);
+        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            stopScript,
+            readyScript,
+        })));
+
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "node",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            ArgumentList = { "-e", RecoveryHarness, payload },
+        })!;
+
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        Assert.True(
+            process.ExitCode == 0,
+            $"Node voice recovery harness failed.{Environment.NewLine}{output}{error}");
+
+        Assert.Contains("cancel loading", stopScript, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("로딩 취소", stopScript, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -143,4 +172,63 @@ public sealed class ChatGptVoiceModeAutoStarterTests
 
     private static T Invoke<T>(object target, string method, params object[] arguments) =>
         (T)Invoke(target, method, arguments)!;
+
+    private const string RecoveryHarness = """
+        const assert = require('node:assert/strict');
+        const vm = require('node:vm');
+        const payload = JSON.parse(Buffer.from(process.argv[1], 'base64').toString('utf8'));
+
+        function execute(script, labels) {
+          const buttons = labels.map(label => ({
+            label,
+            disabled: false,
+            clicked: false,
+            getAttribute(name) {
+              return name === 'aria-label' ? this.label : null;
+            },
+            getBoundingClientRect() {
+              return { width: 40, height: 40 };
+            },
+            click() {
+              this.clicked = true;
+            }
+          }));
+          const context = {
+            document: {
+              querySelectorAll(selector) {
+                assert.equal(selector, 'button');
+                return buttons;
+              }
+            },
+            window: {
+              getComputedStyle() {
+                return { display: 'block', visibility: 'visible' };
+              }
+            }
+          };
+          return { result: vm.runInNewContext(script, context), buttons };
+        }
+
+        let execution = execute(payload.stopScript, ['Voice 끝내기']);
+        assert.equal(execution.result.stopped, true);
+        assert.equal(execution.buttons[0].clicked, true);
+
+        execution = execute(payload.stopScript, ['로딩 취소']);
+        assert.equal(execution.result.stopped, true);
+        assert.equal(execution.buttons[0].clicked, true);
+
+        execution = execute(payload.stopScript, ['Cancel loading']);
+        assert.equal(execution.result.stopped, true);
+        assert.equal(execution.buttons[0].clicked, true);
+
+        execution = execute(payload.stopScript, ['받아쓰기 종료']);
+        assert.equal(execution.result.stopped, false);
+        assert.equal(execution.buttons[0].clicked, false);
+
+        execution = execute(payload.readyScript, ['Voice 끝내기']);
+        assert.equal(execution.result.ready, false);
+
+        execution = execute(payload.readyScript, ['Voice 시작']);
+        assert.equal(execution.result.ready, true);
+        """;
 }

@@ -406,8 +406,10 @@ public sealed class ChatGptWindowContractTests
 
         var rearm = method.IndexOf("starter.Rearm()", StringComparison.Ordinal);
         var stop = method.IndexOf("ChatGptVoiceModeAutoStarter.TryStopScript", StringComparison.Ordinal);
+        var waitForStart = method.IndexOf("WaitForVoiceModeReadyToStartAsync(core)", StringComparison.Ordinal);
         var restart = method.IndexOf("TryAutoStartVoiceModeAsync(core)", StringComparison.Ordinal);
-        Assert.True(rearm >= 0 && rearm < stop && stop < restart);
+        Assert.True(rearm >= 0 && rearm < stop && stop < waitForStart && waitForStart < restart);
+        Assert.DoesNotContain("await Task.Delay(500)", method, StringComparison.Ordinal);
     }
 
     [Fact]

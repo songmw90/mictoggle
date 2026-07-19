@@ -1096,9 +1096,15 @@ internal sealed class ChatGptWindow : Form
             SetStatus("Restoring voice mode...");
             var stopResult = await core.ExecuteScriptAsync(
                 ChatGptVoiceModeAutoStarter.TryStopScript);
-            if (ChatGptVoiceModeAutoStarter.DidStop(stopResult))
+            if (ChatGptVoiceModeAutoStarter.DidStop(stopResult)
+                && !await WaitForVoiceModeReadyToStartAsync(core))
             {
-                await Task.Delay(500);
+                if (IsCurrentVoiceCore(core))
+                {
+                    SetStatus("Voice mode recovery did not reach the start screen.");
+                }
+
+                return;
             }
 
             if (!IsCurrentVoiceCore(core))
@@ -1115,6 +1121,28 @@ internal sealed class ChatGptWindow : Form
                 SetStatus($"Voice mode recovery failed: {ex.Message}");
             }
         }
+    }
+
+    private async Task<bool> WaitForVoiceModeReadyToStartAsync(CoreWebView2 core)
+    {
+        for (var attempt = 0; attempt < VoiceModeStartAttempts; attempt++)
+        {
+            if (!IsCurrentVoiceCore(core))
+            {
+                return false;
+            }
+
+            var result = await core.ExecuteScriptAsync(
+                ChatGptVoiceModeAutoStarter.ReadyToStartScript);
+            if (ChatGptVoiceModeAutoStarter.IsReadyToStart(result))
+            {
+                return true;
+            }
+
+            await Task.Delay(VoiceModeStartRetryDelayMilliseconds);
+        }
+
+        return false;
     }
 
     private void DetachWebViewEvents(WebView2 webView)

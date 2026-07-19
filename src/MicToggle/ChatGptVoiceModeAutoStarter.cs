@@ -74,12 +74,14 @@ internal sealed class ChatGptVoiceModeAutoStarter
           const labelsEnd = label => label.includes('end')
             || label.includes('끝내기')
             || label.includes('종료');
+          const labelsLoadingCancel = label => label.includes('cancel loading')
+            || label.includes('로딩 취소');
           const labelsDictation = label => label.includes('dictation')
             || label.includes('받아쓰기');
           const button = Array.from(document.querySelectorAll('button')).find(candidate => {
             const label = normalize(candidate.getAttribute('aria-label'));
-            return labelsVoice(label)
-              && labelsEnd(label)
+            return (labelsLoadingCancel(label)
+                || (labelsVoice(label) && labelsEnd(label)))
               && !labelsDictation(label)
               && !candidate.disabled
               && isVisible(candidate);
@@ -91,6 +93,36 @@ internal sealed class ChatGptVoiceModeAutoStarter
           const label = button.getAttribute('aria-label');
           button.click();
           return { stopped: true, clicked: true, label };
+        })()
+        """;
+
+    internal static string ReadyToStartScript { get; } = """
+        (() => {
+          const normalize = value => (value || '').trim().toLowerCase();
+          const isVisible = button => {
+            const rect = button.getBoundingClientRect();
+            const style = window.getComputedStyle(button);
+            return rect.width > 0
+              && rect.height > 0
+              && style.display !== 'none'
+              && style.visibility !== 'hidden';
+          };
+          const labelsVoice = label => label.includes('voice') || label.includes('음성');
+          const labelsStart = label => label.includes('start') || label.includes('시작');
+          const labelsDictation = label => label.includes('dictation')
+            || label.includes('받아쓰기');
+          const button = Array.from(document.querySelectorAll('button')).find(candidate => {
+            const label = normalize(candidate.getAttribute('aria-label'));
+            return labelsVoice(label)
+              && labelsStart(label)
+              && !labelsDictation(label)
+              && !candidate.disabled
+              && isVisible(candidate);
+          });
+          return {
+            ready: Boolean(button),
+            label: button ? button.getAttribute('aria-label') : null
+          };
         })()
         """;
 
@@ -124,6 +156,11 @@ internal sealed class ChatGptVoiceModeAutoStarter
     internal static bool DidStop(string resultJson)
     {
         return ReadBooleanProperty(resultJson, "stopped");
+    }
+
+    internal static bool IsReadyToStart(string resultJson)
+    {
+        return ReadBooleanProperty(resultJson, "ready");
     }
 
     private static bool ReadBooleanProperty(string resultJson, string propertyName)

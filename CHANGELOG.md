@@ -2,6 +2,11 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.5 - 2026-07-19
+
+- Recovers stalled Voice sessions whose live action changes to `Cancel loading` or `로딩 취소`.
+- Waits for the real Voice start control after ending a session instead of mistaking the outgoing session for a successful restart.
+
 ## 0.1.4 - 2026-07-19
 
 - Reduced the idle Voice refresh interval from 10 minutes to 5 minutes.

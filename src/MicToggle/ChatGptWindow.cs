@@ -15,7 +15,8 @@ internal sealed class ChatGptWindow : Form
     private const string MutedVolumeGlyph = "\uE74F";
     private const int VoiceModeStartAttempts = 40;
     private const int VoiceModeStartRetryDelayMilliseconds = 250;
-    private const int VoiceIdleRestartIntervalMilliseconds = 5 * 60 * 1000;
+    private const int VoiceWatchdogIntervalMilliseconds = 1000;
+    private const int VoiceLoadingRecoveryThresholdSeconds = 45;
     private const int VoiceRefreshMuteTailMilliseconds = 2000;
 
     private static readonly Color WindowBackground = Color.FromArgb(17, 19, 21);
@@ -115,10 +116,12 @@ internal sealed class ChatGptWindow : Form
     {
         Interval = 1000,
     };
-    private readonly System.Windows.Forms.Timer _voiceIdleTimer = new()
+    private readonly System.Windows.Forms.Timer _voiceWatchdogTimer = new()
     {
-        Interval = VoiceIdleRestartIntervalMilliseconds,
+        Interval = VoiceWatchdogIntervalMilliseconds,
     };
+    private readonly ChatGptVoiceWatchdog _voiceWatchdog = new(
+        TimeSpan.FromSeconds(VoiceLoadingRecoveryThresholdSeconds));
 
     private ChatGptVoiceModeAutoStarter _voiceModeAutoStarter = new();
     private WebView2? _webView;
@@ -167,7 +170,7 @@ internal sealed class ChatGptWindow : Form
         _retryButton.Click += async (_, _) => await RetryWebViewInitializationAsync();
         _outputVolumeSlider.ValueChanged += HandleOutputVolumeChanged;
         _audioVolumeRefreshTimer.Tick += HandleAudioVolumeRefresh;
-        _voiceIdleTimer.Tick += HandleVoiceIdleElapsed;
+        _voiceWatchdogTimer.Tick += HandleVoiceWatchdogElapsed;
         FormClosing += HandleFormClosing;
         Shown += async (_, _) =>
         {
@@ -187,7 +190,7 @@ internal sealed class ChatGptWindow : Form
 
         SetStatus("Starting ChatGPT...");
         _audioVolumeRefreshTimer.Start();
-        _voiceIdleTimer.Start();
+        _voiceWatchdogTimer.Start();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -204,8 +207,8 @@ internal sealed class ChatGptWindow : Form
         {
             _audioVolumeRefreshTimer.Stop();
             _audioVolumeRefreshTimer.Dispose();
-            _voiceIdleTimer.Stop();
-            _voiceIdleTimer.Dispose();
+            _voiceWatchdogTimer.Stop();
+            _voiceWatchdogTimer.Dispose();
             TrySaveOutputVolume(reportErrors: false);
             _toolTip.Dispose();
             if (_windowIcon is not null)
@@ -470,7 +473,6 @@ internal sealed class ChatGptWindow : Form
 
     private Task ApplyMicrophoneStateAsync(bool enabled)
     {
-        RestartVoiceIdleTimer();
         UpdatePttIndicator(enabled);
 
         var webView = _webView;
@@ -938,6 +940,7 @@ internal sealed class ChatGptWindow : Form
     private WebView2 AttachReplacementWebView()
     {
         _voiceModeAutoStarter = new ChatGptVoiceModeAutoStarter();
+        _voiceWatchdog.Reset();
         var replacement = new WebView2 { Dock = DockStyle.Fill };
         _webView = replacement;
         _webViewHost.Controls.Add(replacement);
@@ -1012,21 +1015,51 @@ internal sealed class ChatGptWindow : Form
         }
     }
 
-    private async void HandleVoiceIdleElapsed(object? sender, EventArgs args)
+    private async void HandleVoiceWatchdogElapsed(object? sender, EventArgs args)
     {
-        _voiceIdleTimer.Stop();
-        var mutedForRefresh = false;
+        _voiceWatchdogTimer.Stop();
         try
         {
             var core = GetVoiceRecoveryCore();
-            if (core is not null)
+            if (core is null)
             {
-                _voiceRefreshMuted = true;
-                mutedForRefresh = true;
-                ApplyOutputVolume(reportErrors: false);
-                await RecoverVoiceModeAsync(core);
-                await Task.Delay(VoiceRefreshMuteTailMilliseconds);
+                _voiceWatchdog.Reset();
+                return;
             }
+
+            var result = await core.ExecuteScriptAsync(
+                ChatGptVoiceModeAutoStarter.ProbeStateScript);
+            var state = ChatGptVoiceModeAutoStarter.ReadVoiceModeState(result);
+            if (_voiceWatchdog.Observe(state, DateTimeOffset.UtcNow)
+                == ChatGptVoiceWatchdogAction.Recover)
+            {
+                await RecoverVoiceModeSilentlyAsync(core);
+            }
+        }
+        catch (Exception ex)
+        {
+            _voiceWatchdog.Reset();
+            if (!IsDisposed && !Disposing)
+            {
+                SetStatus($"Voice watchdog failed: {ex.Message}");
+            }
+        }
+        finally
+        {
+            RestartVoiceWatchdogTimer();
+        }
+    }
+
+    private async Task RecoverVoiceModeSilentlyAsync(CoreWebView2 core)
+    {
+        var mutedForRefresh = false;
+        try
+        {
+            _voiceRefreshMuted = true;
+            mutedForRefresh = true;
+            ApplyOutputVolume(reportErrors: false);
+            await RecoverVoiceModeAsync(core);
+            await Task.Delay(VoiceRefreshMuteTailMilliseconds);
         }
         finally
         {
@@ -1035,20 +1068,18 @@ internal sealed class ChatGptWindow : Form
                 _voiceRefreshMuted = false;
                 ApplyOutputVolume(reportErrors: false);
             }
-
-            RestartVoiceIdleTimer();
         }
     }
 
-    private void RestartVoiceIdleTimer()
+    private void RestartVoiceWatchdogTimer()
     {
         if (IsDisposed || Disposing)
         {
             return;
         }
 
-        _voiceIdleTimer.Stop();
-        _voiceIdleTimer.Start();
+        _voiceWatchdogTimer.Stop();
+        _voiceWatchdogTimer.Start();
     }
 
     private CoreWebView2? GetVoiceRecoveryCore()

@@ -2,6 +2,14 @@ using System.Text.Json;
 
 namespace MicToggle;
 
+internal enum ChatGptVoiceModeState
+{
+    Unknown,
+    Active,
+    Inactive,
+    Loading,
+}
+
 internal sealed class ChatGptVoiceModeAutoStarter
 {
     private const int Pending = 0;
@@ -31,7 +39,11 @@ internal sealed class ChatGptVoiceModeAutoStarter
           const buttons = Array.from(document.querySelectorAll('button'));
           const activeButton = buttons.find(button => {
             const label = normalize(button.getAttribute('aria-label'));
-            return labelsVoice(label) && labelsEnd(label) && !labelsDictation(label);
+            return labelsVoice(label)
+              && labelsEnd(label)
+              && !labelsDictation(label)
+              && !button.disabled
+              && isVisible(button);
           });
           if (activeButton) {
             return {
@@ -126,6 +138,52 @@ internal sealed class ChatGptVoiceModeAutoStarter
         })()
         """;
 
+    internal static string ProbeStateScript { get; } = """
+        (() => {
+          const normalize = value => (value || '').trim().toLowerCase();
+          const isVisible = button => {
+            const rect = button.getBoundingClientRect();
+            const style = window.getComputedStyle(button);
+            return rect.width > 0
+              && rect.height > 0
+              && style.display !== 'none'
+              && style.visibility !== 'hidden';
+          };
+          const labelsVoice = label => label.includes('voice') || label.includes('음성');
+          const labelsStart = label => label.includes('start') || label.includes('시작');
+          const labelsEnd = label => label.includes('end')
+            || label.includes('끝내기')
+            || label.includes('종료');
+          const labelsLoadingCancel = label => label.includes('cancel loading')
+            || label.includes('로딩 취소');
+          const labelsDictation = label => label.includes('dictation')
+            || label.includes('받아쓰기');
+          const buttons = Array.from(document.querySelectorAll('button'))
+            .filter(button => !button.disabled && isVisible(button));
+          const find = predicate => buttons.find(button => {
+            const label = normalize(button.getAttribute('aria-label'));
+            return !labelsDictation(label) && predicate(label);
+          });
+
+          const loadingButton = find(labelsLoadingCancel);
+          if (loadingButton) {
+            return { state: 'loading', label: loadingButton.getAttribute('aria-label') };
+          }
+
+          const activeButton = find(label => labelsVoice(label) && labelsEnd(label));
+          if (activeButton) {
+            return { state: 'active', label: activeButton.getAttribute('aria-label') };
+          }
+
+          const inactiveButton = find(label => labelsVoice(label) && labelsStart(label));
+          if (inactiveButton) {
+            return { state: 'inactive', label: inactiveButton.getAttribute('aria-label') };
+          }
+
+          return { state: 'unknown', label: null };
+        })()
+        """;
+
     public bool TryBegin()
     {
         return Interlocked.CompareExchange(ref _state, Running, Pending) == Pending;
@@ -161,6 +219,32 @@ internal sealed class ChatGptVoiceModeAutoStarter
     internal static bool IsReadyToStart(string resultJson)
     {
         return ReadBooleanProperty(resultJson, "ready");
+    }
+
+    internal static ChatGptVoiceModeState ReadVoiceModeState(string resultJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(resultJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("state", out var state)
+                || state.ValueKind != JsonValueKind.String)
+            {
+                return ChatGptVoiceModeState.Unknown;
+            }
+
+            return state.GetString() switch
+            {
+                "active" => ChatGptVoiceModeState.Active,
+                "inactive" => ChatGptVoiceModeState.Inactive,
+                "loading" => ChatGptVoiceModeState.Loading,
+                _ => ChatGptVoiceModeState.Unknown,
+            };
+        }
+        catch (JsonException)
+        {
+            return ChatGptVoiceModeState.Unknown;
+        }
     }
 
     private static bool ReadBooleanProperty(string resultJson, string propertyName)

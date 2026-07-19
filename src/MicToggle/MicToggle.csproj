@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>MicToggle</AssemblyName>
     <Product>MicToggle</Product>
-    <Version>0.1.5</Version>
+    <Version>0.1.6</Version>
     <Authors>Fantazm</Authors>
     <Description>Push-to-talk control for ChatGPT voice mode on Windows.</Description>
     <Copyright>Copyright (c) 2026 Fantazm</Copyright>

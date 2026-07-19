@@ -342,7 +342,7 @@ public sealed class ChatGptWindowContractTests
     }
 
     [Fact]
-    public void Window_refreshes_voice_mode_after_five_minutes_without_ptt_activity()
+    public void Window_watches_voice_state_each_second_and_recovers_only_when_needed()
     {
         var repositoryRoot = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -352,27 +352,31 @@ public sealed class ChatGptWindowContractTests
             "ChatGptWindow.cs"));
 
         Assert.Contains(
-            "private const int VoiceIdleRestartIntervalMilliseconds = 5 * 60 * 1000;",
+            "private const int VoiceWatchdogIntervalMilliseconds = 1000;",
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "private readonly System.Windows.Forms.Timer _voiceIdleTimer = new()",
+            "private const int VoiceLoadingRecoveryThresholdSeconds = 45;",
             source,
             StringComparison.Ordinal);
-        Assert.Contains("Interval = VoiceIdleRestartIntervalMilliseconds", source, StringComparison.Ordinal);
-        Assert.Contains("_voiceIdleTimer.Tick += HandleVoiceIdleElapsed", source, StringComparison.Ordinal);
-        Assert.Contains("_voiceIdleTimer.Stop()", source, StringComparison.Ordinal);
-        Assert.Contains("_voiceIdleTimer.Dispose()", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "private readonly System.Windows.Forms.Timer _voiceWatchdogTimer = new()",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains("Interval = VoiceWatchdogIntervalMilliseconds", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceWatchdogTimer.Tick += HandleVoiceWatchdogElapsed", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceWatchdogTimer.Stop()", source, StringComparison.Ordinal);
+        Assert.Contains("_voiceWatchdogTimer.Dispose()", source, StringComparison.Ordinal);
 
         var applyStart = source.IndexOf(
             "private Task ApplyMicrophoneStateAsync",
             StringComparison.Ordinal);
         var applyEnd = source.IndexOf("private Task RunOnUiThreadAsync", applyStart, StringComparison.Ordinal);
         Assert.True(applyStart >= 0 && applyEnd > applyStart);
-        Assert.Contains("RestartVoiceIdleTimer()", source[applyStart..applyEnd], StringComparison.Ordinal);
+        Assert.DoesNotContain("VoiceWatchdog", source[applyStart..applyEnd], StringComparison.Ordinal);
 
         var handlerStart = source.IndexOf(
-            "private async void HandleVoiceIdleElapsed",
+            "private async void HandleVoiceWatchdogElapsed",
             StringComparison.Ordinal);
         var handlerEnd = source.IndexOf(
             "private CoreWebView2? GetVoiceRecoveryCore",
@@ -380,9 +384,12 @@ public sealed class ChatGptWindowContractTests
             StringComparison.Ordinal);
         Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
         var handler = source[handlerStart..handlerEnd];
-        Assert.Contains("_voiceIdleTimer.Stop()", handler, StringComparison.Ordinal);
-        Assert.Contains("await RecoverVoiceModeAsync(core)", handler, StringComparison.Ordinal);
-        Assert.Contains("RestartVoiceIdleTimer()", handler, StringComparison.Ordinal);
+        Assert.Contains("ChatGptVoiceModeAutoStarter.ProbeStateScript", handler, StringComparison.Ordinal);
+        Assert.Contains("_voiceWatchdog.Observe", handler, StringComparison.Ordinal);
+        Assert.Contains("ChatGptVoiceWatchdogAction.Recover", handler, StringComparison.Ordinal);
+        Assert.Contains("await RecoverVoiceModeSilentlyAsync(core)", handler, StringComparison.Ordinal);
+        Assert.Contains("_voiceWatchdogTimer.Stop()", handler, StringComparison.Ordinal);
+        Assert.Contains("RestartVoiceWatchdogTimer()", handler, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -413,7 +420,7 @@ public sealed class ChatGptWindowContractTests
     }
 
     [Fact]
-    public void Idle_refresh_mutes_output_around_the_dom_cycle_then_restores_current_volume()
+    public void Watchdog_recovery_mutes_output_around_the_dom_cycle_then_restores_current_volume()
     {
         var repositoryRoot = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -427,10 +434,10 @@ public sealed class ChatGptWindowContractTests
             StringComparison.Ordinal);
 
         var handlerStart = source.IndexOf(
-            "private async void HandleVoiceIdleElapsed",
+            "private async Task RecoverVoiceModeSilentlyAsync",
             StringComparison.Ordinal);
         var handlerEnd = source.IndexOf(
-            "private void RestartVoiceIdleTimer",
+            "private void RestartVoiceWatchdogTimer",
             handlerStart,
             StringComparison.Ordinal);
         Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);

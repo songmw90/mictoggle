@@ -98,21 +98,33 @@ public sealed class ChatGptVoiceModeAutoStarterTests
     public void Recovery_scripts_handle_live_voice_end_and_loading_cancel_states()
     {
         var type = RequireStarterType();
+        var startProperty = type.GetProperty(
+            "TryStartScript",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         var stopProperty = type.GetProperty(
             "TryStopScript",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         var readyProperty = type.GetProperty(
             "ReadyToStartScript",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var probeProperty = type.GetProperty(
+            "ProbeStateScript",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(startProperty);
         Assert.NotNull(stopProperty);
         Assert.NotNull(readyProperty);
+        Assert.NotNull(probeProperty);
+        var startScript = Assert.IsType<string>(startProperty!.GetValue(null));
         var stopScript = Assert.IsType<string>(stopProperty!.GetValue(null));
         var readyScript = Assert.IsType<string>(readyProperty!.GetValue(null));
+        var probeScript = Assert.IsType<string>(probeProperty!.GetValue(null));
 
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
+            startScript,
             stopScript,
             readyScript,
+            probeScript,
         })));
 
         using var process = Process.Start(new ProcessStartInfo
@@ -134,6 +146,24 @@ public sealed class ChatGptVoiceModeAutoStarterTests
 
         Assert.Contains("cancel loading", stopScript, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("로딩 취소", stopScript, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("{\"state\":\"active\"}", "Active")]
+    [InlineData("{\"state\":\"inactive\"}", "Inactive")]
+    [InlineData("{\"state\":\"loading\"}", "Loading")]
+    [InlineData("{\"state\":\"unknown\"}", "Unknown")]
+    [InlineData("null", "Unknown")]
+    [InlineData("not-json", "Unknown")]
+    public void Probe_result_maps_known_dom_states(string json, string expected)
+    {
+        var type = RequireStarterType();
+        var method = type.GetMethod(
+            "ReadVoiceModeState",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        Assert.Equal(expected, method!.Invoke(null, [json])!.ToString());
     }
 
     [Theory]
@@ -178,16 +208,19 @@ public sealed class ChatGptVoiceModeAutoStarterTests
         const vm = require('node:vm');
         const payload = JSON.parse(Buffer.from(process.argv[1], 'base64').toString('utf8'));
 
-        function execute(script, labels) {
-          const buttons = labels.map(label => ({
-            label,
+        function execute(script, descriptors) {
+          const buttons = descriptors.map(value => ({
+            label: typeof value === 'string' ? value : value.label,
+            visible: typeof value === 'string' || value.visible !== false,
             disabled: false,
             clicked: false,
             getAttribute(name) {
               return name === 'aria-label' ? this.label : null;
             },
             getBoundingClientRect() {
-              return { width: 40, height: 40 };
+              return this.visible
+                ? { width: 40, height: 40 }
+                : { width: 0, height: 0 };
             },
             click() {
               this.clicked = true;
@@ -230,5 +263,29 @@ public sealed class ChatGptVoiceModeAutoStarterTests
 
         execution = execute(payload.readyScript, ['Voice 시작']);
         assert.equal(execution.result.ready, true);
+
+        execution = execute(payload.startScript, [
+          { label: 'Voice 끝내기', visible: false },
+          'Voice 시작'
+        ]);
+        assert.equal(execution.result.started, true);
+        assert.equal(execution.result.clicked, true);
+        assert.equal(execution.buttons[0].clicked, false);
+        assert.equal(execution.buttons[1].clicked, true);
+
+        execution = execute(payload.probeScript, ['Voice 끝내기']);
+        assert.equal(execution.result.state, 'active');
+
+        execution = execute(payload.probeScript, ['Voice 시작']);
+        assert.equal(execution.result.state, 'inactive');
+
+        execution = execute(payload.probeScript, ['로딩 취소']);
+        assert.equal(execution.result.state, 'loading');
+
+        execution = execute(payload.probeScript, ['Cancel loading']);
+        assert.equal(execution.result.state, 'loading');
+
+        execution = execute(payload.probeScript, ['받아쓰기 시작']);
+        assert.equal(execution.result.state, 'unknown');
         """;
 }

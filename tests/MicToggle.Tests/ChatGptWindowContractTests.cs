@@ -520,7 +520,7 @@ public sealed class ChatGptWindowContractTests
             repositoryRoot,
             "src",
             "MicToggle",
-            "ChatGptWindow.cs"));
+            "ChatGptWindow.cs")).ReplaceLineEndings("\n");
 
         Assert.Contains("public ChatGptWindow(bool startHidden = false)", source, StringComparison.Ordinal);
         Assert.Contains("Opacity = 0", source, StringComparison.Ordinal);

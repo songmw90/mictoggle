@@ -14,13 +14,43 @@ internal static class ChatGptMicrophoneBridge
             }
 
             const tracks = new Set();
+            const meters = new Map();
             let enabled = false;
             let tearingDown = false;
             let nativeState = null;
 
+            const pauseMeter = track => {
+                const meter = meters.get(track);
+                if (!meter) {
+                    return;
+                }
+
+                if (meter.timerId !== null) {
+                    window.clearInterval(meter.timerId);
+                    meter.timerId = null;
+                }
+
+                if (meter.context.state === "running") {
+                    meter.context.suspend().catch(() => {});
+                }
+            };
+            const disposeMeter = track => {
+                const meter = meters.get(track);
+                if (!meter) {
+                    return;
+                }
+
+                pauseMeter(track);
+                meter.source.disconnect();
+                meter.analyser.disconnect();
+                meter.context.close().catch(() => {});
+                meters.delete(track);
+            };
+
             const pruneTracks = () => {
                 tracks.forEach(track => {
                     if (track.readyState !== "live") {
+                        disposeMeter(track);
                         tracks.delete(track);
                     }
                 });
@@ -34,9 +64,89 @@ internal static class ChatGptMicrophoneBridge
                 ...status()
             });
             const removeTrack = track => {
+                disposeMeter(track);
                 if (tracks.delete(track)) {
                     postStatus();
                 }
+            };
+            const startMeter = track => {
+                if (!enabled || track.readyState !== "live") {
+                    return;
+                }
+
+                let meter = meters.get(track);
+                if (!meter) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (typeof AudioContext !== "function" || typeof window.MediaStream !== "function") {
+                        return;
+                    }
+
+                    try {
+                        const context = new AudioContext();
+                        const analyser = context.createAnalyser();
+                        analyser.fftSize = 256;
+                        analyser.smoothingTimeConstant = 0.35;
+                        const source = context.createMediaStreamSource(new window.MediaStream([track]));
+                        source.connect(analyser);
+                        meter = {
+                            analyser,
+                            context,
+                            lastLevel: -1,
+                            lastPostedAt: 0,
+                            samples: new Uint8Array(analyser.fftSize),
+                            source,
+                            timerId: null
+                        };
+                        meters.set(track, meter);
+                    } catch {
+                        return;
+                    }
+                }
+
+                if (meter.timerId !== null) {
+                    return;
+                }
+
+                meter.context.resume().catch(() => {});
+                meter.timerId = window.setInterval(() => {
+                    if (!enabled || track.readyState !== "live") {
+                        pauseMeter(track);
+                        return;
+                    }
+
+                    meter.analyser.getByteTimeDomainData(meter.samples);
+                    let squareTotal = 0;
+                    for (const sample of meter.samples) {
+                        const normalized = (sample - 128) / 128;
+                        squareTotal += normalized * normalized;
+                    }
+
+                    const rms = Math.sqrt(squareTotal / meter.samples.length);
+                    const level = Math.round(Math.min(1, rms * 4) * 1000) / 1000;
+                    const now = Date.now();
+                    if (Math.abs(level - meter.lastLevel) < 0.03
+                        && now - meter.lastPostedAt < 500) {
+                        return;
+                    }
+
+                    meter.lastLevel = level;
+                    meter.lastPostedAt = now;
+                    window.chrome?.webview?.postMessage({
+                        type: "microphone-activity",
+                        enabled,
+                        trackCount: status().trackCount,
+                        level
+                    });
+                }, 100);
+            };
+            const syncMeters = () => {
+                tracks.forEach(track => {
+                    if (enabled) {
+                        startMeter(track);
+                    } else {
+                        pauseMeter(track);
+                    }
+                });
             };
             const applyEnabledState = track => {
                 if (track.readyState === "live") {
@@ -49,6 +159,7 @@ internal static class ChatGptMicrophoneBridge
                 enabled = nextEnabled;
                 pruneTracks();
                 tracks.forEach(applyEnabledState);
+                syncMeters();
                 if (stateChanged) {
                     postStatus();
                 }
@@ -68,6 +179,9 @@ internal static class ChatGptMicrophoneBridge
                     return result;
                 };
                 applyEnabledState(track);
+                if (enabled) {
+                    startMeter(track);
+                }
                 track.addEventListener("ended", () => {
                     removeTrack(track);
                 }, { once: true });
@@ -117,6 +231,7 @@ internal static class ChatGptMicrophoneBridge
                 enabled = false;
                 pruneTracks();
                 tracks.forEach(applyEnabledState);
+                syncMeters();
                 postStatus();
             };
             const muteForTeardown = () => {

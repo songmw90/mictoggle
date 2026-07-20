@@ -2,6 +2,12 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.9 - 2026-07-21
+
+- Shows a thin mint activity frame on the current monitor while push-to-talk is held.
+- Brightens the frame from locally measured microphone input without retaining audio data.
+- Stops input-level sampling immediately when push-to-talk is released.
+
 ## 0.1.8 - 2026-07-21
 
 - Restores Voice mode while MicToggle is hidden in the notification area.

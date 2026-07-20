@@ -6,6 +6,7 @@ internal sealed class MicToggleAppContext : ApplicationContext
     private readonly Icon _trayIconAsset;
     private readonly CtrlAltHook _hook = new();
     private readonly ChatGptWindow _window;
+    private readonly MicrophoneActivityOverlay _activityOverlay = new();
     private bool _isHolding;
 
     public MicToggleAppContext(bool startHidden)
@@ -25,6 +26,7 @@ internal sealed class MicToggleAppContext : ApplicationContext
             Visible = true,
         };
         _trayIcon.DoubleClick += (_, _) => _window.ShowWindow();
+        _window.MicrophoneActivityChanged += HandleMicrophoneActivityChanged;
 
         _hook.Pressed += async (_, _) => await SetHoldingAsync(true);
         _hook.Released += async (_, _) => await SetHoldingAsync(false);
@@ -56,12 +58,42 @@ internal sealed class MicToggleAppContext : ApplicationContext
         _trayIcon.Text = $"MicToggle - PTT {(isHolding ? "held" : "released")}";
         try
         {
+            if (isHolding)
+            {
+                _activityOverlay.ShowForForegroundScreen();
+            }
+            else
+            {
+                _activityOverlay.Hide();
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowBalloon("MicToggle indicator failed", ex.Message, ToolTipIcon.Error);
+        }
+
+        try
+        {
             await _window.SetMicrophoneEnabledAsync(isHolding);
         }
         catch (Exception ex)
         {
             ShowBalloon("MicToggle error", ex.Message, ToolTipIcon.Error);
         }
+    }
+
+    private void HandleMicrophoneActivityChanged(
+        object? sender,
+        MicrophoneActivityEventArgs args)
+    {
+        if (!_isHolding)
+        {
+            return;
+        }
+
+        _activityOverlay.UpdateActivity(
+            args.Enabled && args.TrackCount > 0,
+            args.Level);
     }
 
     private void ShowBalloon(string title, string text, ToolTipIcon icon)
@@ -76,35 +108,43 @@ internal sealed class MicToggleAppContext : ApplicationContext
     {
         try
         {
-            _hook.Dispose();
+            _window.MicrophoneActivityChanged -= HandleMicrophoneActivityChanged;
+            _activityOverlay.Dispose();
         }
         finally
         {
             try
             {
-                _window.ExitApplication();
+                _hook.Dispose();
             }
             finally
             {
                 try
                 {
-                    _trayIcon.Visible = false;
+                    _window.ExitApplication();
                 }
                 finally
                 {
                     try
                     {
-                        _trayIcon.Dispose();
+                        _trayIcon.Visible = false;
                     }
                     finally
                     {
                         try
                         {
-                            _trayIconAsset.Dispose();
+                            _trayIcon.Dispose();
                         }
                         finally
                         {
-                            base.ExitThreadCore();
+                            try
+                            {
+                                _trayIconAsset.Dispose();
+                            }
+                            finally
+                            {
+                                base.ExitThreadCore();
+                            }
                         }
                     }
                 }

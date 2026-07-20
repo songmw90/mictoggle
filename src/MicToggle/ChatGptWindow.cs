@@ -135,6 +135,8 @@ internal sealed class ChatGptWindow : Form
     private bool _hiddenVoiceRefreshPresentationActive;
     private bool _voiceRefreshMuted;
 
+    public event EventHandler<MicrophoneActivityEventArgs>? MicrophoneActivityChanged;
+
     public ChatGptWindow(bool startHidden = false)
     {
         _hideAfterStartupInitialization = startHidden;
@@ -1402,8 +1404,10 @@ internal sealed class ChatGptWindow : Form
             return;
         }
 
-        if (root.TryGetProperty("type", out var type)
-            && type.GetString() != "microphone-status")
+        var messageType = root.TryGetProperty("type", out var type)
+            ? type.GetString()
+            : "microphone-status";
+        if (messageType is not ("microphone-status" or "microphone-activity"))
         {
             return;
         }
@@ -1419,6 +1423,20 @@ internal sealed class ChatGptWindow : Form
             && trackCountProperty.TryGetInt32(out var parsedTrackCount)
                 ? parsedTrackCount
                 : 0;
+        var level = messageType == "microphone-activity"
+            && root.TryGetProperty("level", out var levelProperty)
+            && levelProperty.TryGetDouble(out var parsedLevel)
+                ? Math.Clamp(parsedLevel, 0, 1)
+                : 0;
+        MicrophoneActivityChanged?.Invoke(
+            this,
+            new MicrophoneActivityEventArgs(enabled, trackCount, level));
+
+        if (messageType == "microphone-activity")
+        {
+            return;
+        }
+
         SetStatus(ChatGptWindowState.FormatMicrophoneStatus(enabled, trackCount));
     }
 

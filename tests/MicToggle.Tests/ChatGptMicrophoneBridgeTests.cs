@@ -55,6 +55,9 @@ public sealed class ChatGptMicrophoneBridgeTests
                     this.readyState = 'ended';
                     endedListeners.splice(0).forEach(listener => listener());
                 },
+                endSilently() {
+                    this.readyState = 'ended';
+                },
                 endedListenerCount() {
                     return endedListeners.length;
                 },
@@ -72,6 +75,57 @@ public sealed class ChatGptMicrophoneBridgeTests
             const webMessageListeners = [];
             let originalCalls = 0;
             let originalThisMatches = false;
+            let inputAmplitude = 0;
+            let audioContextCount = 0;
+            const audioContexts = [];
+
+            class FakeAnalyser {
+                constructor() {
+                    this.fftSize = 2048;
+                    this.smoothingTimeConstant = 0;
+                }
+                getByteTimeDomainData(samples) {
+                    for (let index = 0; index < samples.length; index += 1) {
+                        const direction = index % 2 === 0 ? 1 : -1;
+                        samples[index] = 128 + (inputAmplitude * direction);
+                    }
+                }
+                disconnect() {}
+            }
+            class FakeAudioContext {
+                constructor() {
+                    audioContextCount += 1;
+                    this.state = 'suspended';
+                    audioContexts.push(this);
+                }
+                createAnalyser() {
+                    return new FakeAnalyser();
+                }
+                createMediaStreamSource(stream) {
+                    assert.equal(stream.tracks.length, 1);
+                    return {
+                        connect() {},
+                        disconnect() {}
+                    };
+                }
+                resume() {
+                    this.state = 'running';
+                    return Promise.resolve();
+                }
+                suspend() {
+                    this.state = 'suspended';
+                    return Promise.resolve();
+                }
+                close() {
+                    this.state = 'closed';
+                    return Promise.resolve();
+                }
+            }
+            class FakeMediaStream {
+                constructor(tracks) {
+                    this.tracks = tracks;
+                }
+            }
 
             const mediaDevices = {
                 getUserMedia() {
@@ -102,10 +156,17 @@ public sealed class ChatGptMicrophoneBridgeTests
                     windowListeners.set(type, listeners);
                 },
                 setInterval(callback, delay) {
-                    intervals.push({ callback, delay });
+                    intervals.push({ callback, delay, active: true });
                     return intervals.length;
+                },
+                clearInterval(id) {
+                    if (intervals[id - 1]) {
+                        intervals[id - 1].active = false;
+                    }
                 }
             };
+            window.AudioContext = FakeAudioContext;
+            window.MediaStream = FakeMediaStream;
             window.window = window;
             const context = vm.createContext({
                 window,
@@ -126,7 +187,18 @@ public sealed class ChatGptMicrophoneBridgeTests
                 get originalCalls() { return originalCalls; },
                 get originalThisMatches() { return originalThisMatches; },
                 evaluate(script) { return vm.runInContext(script, context); },
-                tick() { intervals.forEach(interval => interval.callback()); },
+                tick(delay) {
+                    intervals
+                        .filter(interval => interval.active && (delay === undefined || interval.delay === delay))
+                        .forEach(interval => interval.callback());
+                },
+                setInputAmplitude(value) {
+                    inputAmplitude = value;
+                },
+                get audioContextCount() { return audioContextCount; },
+                get closedAudioContextCount() {
+                    return audioContexts.filter(context => context.state === 'closed').length;
+                },
                 sendState(enabled) {
                     webMessageListeners.forEach(listener => listener({
                         data: { type: 'microphone-state', enabled }
@@ -179,6 +251,23 @@ public sealed class ChatGptMicrophoneBridgeTests
             assert.equal(topTrack.enabled, true, 'top-level poller must consume native host state');
             assert.equal(frameTrack.enabled, true, 'frame poller must consume the same native host state');
 
+            topLevel.setInputAmplitude(32);
+            topLevel.tick(100);
+            const activity = topLevel.messages
+                .filter(message => message.type === 'microphone-activity')
+                .at(-1);
+            assert.ok(activity, 'enabled live tracks must report actual input activity');
+            assert.equal(activity.enabled, true);
+            assert.equal(activity.trackCount, 1);
+            assert.ok(activity.level >= 0.5 && activity.level <= 1);
+            assert.equal(topLevel.audioContextCount, 1);
+
+            topLevel.tick(50);
+            assert.equal(
+                topLevel.intervals.filter(value => value.delay === 100 && value.active).length,
+                1,
+                'host polling must not create duplicate level meters');
+
             frameTrack.enabled = false;
             childFrame.tick();
             assert.equal(
@@ -191,6 +280,10 @@ public sealed class ChatGptMicrophoneBridgeTests
             childFrame.tick();
             assert.equal(topTrack.enabled, false, 'top-level poller must release without script execution');
             assert.equal(frameTrack.enabled, false, 'frame poller must release without script execution');
+            assert.equal(
+                topLevel.intervals.filter(value => value.delay === 100 && value.active).length,
+                0,
+                'releasing push-to-talk must stop level sampling');
 
             topLevel.removeHost();
             sharedHostState.Enabled = true;
@@ -271,6 +364,19 @@ public sealed class ChatGptMicrophoneBridgeTests
             assert.equal(unloadTrack.enabled, false, 'beforeunload must mute tracks immediately');
             unloadFrame.tick();
             assert.equal(unloadTrack.enabled, true, 'a canceled beforeunload must resume native host state');
+
+            const pruneFrame = createRuntime('https://chatgpt.com/c/prune', { Enabled: true });
+            const pruneTrack = createTrack();
+            pruneFrame.streams.push({ getAudioTracks: () => [pruneTrack] });
+            await pruneFrame.mediaDevices.getUserMedia({ audio: true });
+            pruneFrame.tick(50);
+            assert.equal(pruneFrame.audioContextCount, 1);
+            pruneTrack.endSilently();
+            assert.equal(pruneFrame.context.window.__micToggle.status().trackCount, 0);
+            assert.equal(
+                pruneFrame.closedAudioContextCount,
+                1,
+                'pruning an ended track must close its audio meter');
 
             for (const origin of [
                 'http://chatgpt.com/',

@@ -47,6 +47,8 @@ chord is held. Windows privacy settings and ChatGPT behavior still apply.
 
 MicToggle injects a local script into allowed ChatGPT pages to control live
 microphone tracks and to attempt to start voice mode. It receives only bridge
-status messages such as whether a track is enabled and how many live tracks
-exist. It does not extract prompts, responses, conversation history, or account
-credentials.
+status messages such as whether a track is enabled, how many live tracks exist,
+and a normalized input-level value used for the on-screen activity frame. The
+level meter runs only while push-to-talk is held and does not retain or transfer
+audio samples. MicToggle does not extract prompts, responses, conversation
+history, or account credentials.

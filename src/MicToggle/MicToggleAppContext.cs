@@ -60,7 +60,7 @@ internal sealed class MicToggleAppContext : ApplicationContext
         {
             if (isHolding)
             {
-                _activityOverlay.ShowForForegroundScreen();
+                _activityOverlay.ShowForAllScreens();
             }
             else
             {

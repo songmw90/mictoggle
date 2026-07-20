@@ -22,12 +22,26 @@ public sealed class MicToggleActivityIndicatorContractTests
         Assert.True(methodStart >= 0 && methodEnd > methodStart);
         var method = source[methodStart..methodEnd];
 
-        var show = method.IndexOf("_activityOverlay.ShowForForegroundScreen()", StringComparison.Ordinal);
+        var show = method.IndexOf("_activityOverlay.ShowForAllScreens()", StringComparison.Ordinal);
         var hide = method.IndexOf("_activityOverlay.Hide()", StringComparison.Ordinal);
         var webView = method.IndexOf("await _window.SetMicrophoneEnabledAsync", StringComparison.Ordinal);
 
         Assert.True(show >= 0 && show < webView);
         Assert.True(hide >= 0 && hide < webView);
+    }
+
+    [Fact]
+    public void Overlay_enumerates_all_screens_without_foreground_screen_routing()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "MicToggle",
+            "MicrophoneActivityOverlay.cs"));
+
+        Assert.Contains("Screen.AllScreens", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetForegroundWindow", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Screen.FromHandle", source, StringComparison.Ordinal);
     }
 
     [Fact]

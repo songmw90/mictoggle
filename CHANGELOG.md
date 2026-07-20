@@ -2,6 +2,11 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.11 - 2026-07-21
+
+- Shows the microphone activity frame on every connected monitor while push-to-talk is held.
+- Removes stale edge windows when the connected monitor layout shrinks.
+
 ## 0.1.10 - 2026-07-21
 
 - Keeps Voice reconnect audio muted for two seconds after the page reports an active session.

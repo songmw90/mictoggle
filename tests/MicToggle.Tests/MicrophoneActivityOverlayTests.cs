@@ -24,16 +24,20 @@ public sealed class MicrophoneActivityOverlayTests
     }
 
     [Fact]
-    public void Overlay_uses_only_four_thin_monitor_edges()
+    public void Overlay_uses_four_thin_edges_for_every_monitor()
     {
         Assert.NotNull(OverlayType);
         var method = OverlayType!.GetMethod(
-            "CreateEdgeBounds",
+            "CreateAllEdgeBounds",
             BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
         Assert.NotNull(method);
 
-        var screen = new Rectangle(-1920, 0, 1920, 1080);
-        var edges = (Rectangle[])method!.Invoke(null, [screen, 4])!;
+        Rectangle[] screens =
+        [
+            new Rectangle(-1920, 0, 1920, 1080),
+            new Rectangle(0, -360, 2560, 1440),
+        ];
+        var edges = (Rectangle[])method!.Invoke(null, [screens, 4])!;
 
         Assert.Equal(
             [
@@ -41,9 +45,13 @@ public sealed class MicrophoneActivityOverlayTests
                 new Rectangle(-1920, 1076, 1920, 4),
                 new Rectangle(-1920, 4, 4, 1072),
                 new Rectangle(-4, 4, 4, 1072),
+                new Rectangle(0, -360, 2560, 4),
+                new Rectangle(0, 1076, 2560, 4),
+                new Rectangle(0, -356, 4, 1432),
+                new Rectangle(2556, -356, 4, 1432),
             ],
             edges);
-        Assert.Equal(23936, edges.Sum(edge => edge.Width * edge.Height));
+        Assert.Equal(8, edges.Length);
         Assert.All(edges, edge => Assert.True(edge.Width == 4 || edge.Height == 4));
     }
 

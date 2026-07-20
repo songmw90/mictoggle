@@ -6,33 +6,32 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
 {
     private const int EdgeThickness = 4;
 
-    private readonly ActivityEdgeWindow[] _edges =
-    [
-        new ActivityEdgeWindow(),
-        new ActivityEdgeWindow(),
-        new ActivityEdgeWindow(),
-        new ActivityEdgeWindow(),
-    ];
+    private readonly List<ActivityEdgeWindow> _edges = [];
+    private int _activeEdgeCount;
     private bool _visible;
 
     internal static Color AccentColor { get; } = Color.FromArgb(76, 217, 130);
 
-    public void ShowForForegroundScreen()
+    public void ShowForAllScreens()
     {
-        var foregroundWindow = GetForegroundWindow();
-        var screen = foregroundWindow == IntPtr.Zero
-            ? Screen.PrimaryScreen
-            : Screen.FromHandle(foregroundWindow);
-        screen ??= Screen.FromPoint(Cursor.Position);
+        var edgeBounds = CreateAllEdgeBounds(
+            Screen.AllScreens.Select(screen => screen.Bounds).ToArray(),
+            EdgeThickness);
+        EnsureEdgeCount(edgeBounds.Length);
 
-        var edgeBounds = CreateEdgeBounds(screen.Bounds, EdgeThickness);
         var opacity = CalculateOpacity(trackConnected: false, level: 0);
-        for (var index = 0; index < _edges.Length; index++)
+        for (var index = 0; index < edgeBounds.Length; index++)
         {
             _edges[index].ShowEdge(edgeBounds[index], AccentColor, opacity);
         }
 
-        _visible = true;
+        for (var index = edgeBounds.Length; index < _edges.Count; index++)
+        {
+            _edges[index].Hide();
+        }
+
+        _activeEdgeCount = edgeBounds.Length;
+        _visible = _activeEdgeCount > 0;
     }
 
     public void UpdateActivity(bool trackConnected, double level)
@@ -43,15 +42,16 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
         }
 
         var opacity = CalculateOpacity(trackConnected, level);
-        foreach (var edge in _edges)
+        for (var index = 0; index < _activeEdgeCount; index++)
         {
-            edge.Opacity = opacity;
+            _edges[index].Opacity = opacity;
         }
     }
 
     public void Hide()
     {
         _visible = false;
+        _activeEdgeCount = 0;
         foreach (var edge in _edges)
         {
             edge.Hide();
@@ -61,10 +61,22 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
     public void Dispose()
     {
         _visible = false;
+        _activeEdgeCount = 0;
         foreach (var edge in _edges)
         {
             edge.Dispose();
         }
+    }
+
+    internal static Rectangle[] CreateAllEdgeBounds(
+        Rectangle[] screenBounds,
+        int thickness)
+    {
+        ArgumentNullException.ThrowIfNull(screenBounds);
+
+        return screenBounds
+            .SelectMany(bounds => CreateEdgeBounds(bounds, thickness))
+            .ToArray();
     }
 
     internal static Rectangle[] CreateEdgeBounds(Rectangle screenBounds, int thickness)
@@ -119,8 +131,13 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
         return 0.68 + (Math.Clamp(level, 0, 1) * 0.28);
     }
 
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
+    private void EnsureEdgeCount(int count)
+    {
+        while (_edges.Count < count)
+        {
+            _edges.Add(new ActivityEdgeWindow());
+        }
+    }
 
     private sealed class ActivityEdgeWindow : Form
     {

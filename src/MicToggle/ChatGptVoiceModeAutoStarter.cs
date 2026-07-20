@@ -22,12 +22,15 @@ internal sealed class ChatGptVoiceModeAutoStarter
         (() => {
           const normalize = value => (value || '').trim().toLowerCase();
           const isVisible = button => {
-            const rect = button.getBoundingClientRect();
             const style = window.getComputedStyle(button);
-            return rect.width > 0
-              && rect.height > 0
-              && style.display !== 'none'
-              && style.visibility !== 'hidden';
+            if (style.display === 'none' || style.visibility === 'hidden') {
+              return false;
+            }
+            if (hostWindowHidden) {
+              return true;
+            }
+            const rect = button.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
           };
           const labelsVoice = label => label.includes('voice') || label.includes('음성');
           const labelsStart = label => label.includes('start') || label.includes('시작');
@@ -75,12 +78,15 @@ internal sealed class ChatGptVoiceModeAutoStarter
         (() => {
           const normalize = value => (value || '').trim().toLowerCase();
           const isVisible = button => {
-            const rect = button.getBoundingClientRect();
             const style = window.getComputedStyle(button);
-            return rect.width > 0
-              && rect.height > 0
-              && style.display !== 'none'
-              && style.visibility !== 'hidden';
+            if (style.display === 'none' || style.visibility === 'hidden') {
+              return false;
+            }
+            if (hostWindowHidden) {
+              return true;
+            }
+            const rect = button.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
           };
           const labelsVoice = label => label.includes('voice') || label.includes('음성');
           const labelsEnd = label => label.includes('end')
@@ -112,12 +118,15 @@ internal sealed class ChatGptVoiceModeAutoStarter
         (() => {
           const normalize = value => (value || '').trim().toLowerCase();
           const isVisible = button => {
-            const rect = button.getBoundingClientRect();
             const style = window.getComputedStyle(button);
-            return rect.width > 0
-              && rect.height > 0
-              && style.display !== 'none'
-              && style.visibility !== 'hidden';
+            if (style.display === 'none' || style.visibility === 'hidden') {
+              return false;
+            }
+            if (hostWindowHidden) {
+              return true;
+            }
+            const rect = button.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
           };
           const labelsVoice = label => label.includes('voice') || label.includes('음성');
           const labelsStart = label => label.includes('start') || label.includes('시작');
@@ -142,12 +151,15 @@ internal sealed class ChatGptVoiceModeAutoStarter
         (() => {
           const normalize = value => (value || '').trim().toLowerCase();
           const isVisible = button => {
-            const rect = button.getBoundingClientRect();
             const style = window.getComputedStyle(button);
-            return rect.width > 0
-              && rect.height > 0
-              && style.display !== 'none'
-              && style.visibility !== 'hidden';
+            if (style.display === 'none' || style.visibility === 'hidden') {
+              return false;
+            }
+            if (hostWindowHidden) {
+              return true;
+            }
+            const rect = button.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
           };
           const labelsVoice = label => label.includes('voice') || label.includes('음성');
           const labelsStart = label => label.includes('start') || label.includes('시작');
@@ -183,6 +195,18 @@ internal sealed class ChatGptVoiceModeAutoStarter
           return { state: 'unknown', label: null };
         })()
         """;
+
+    internal static string BuildTryStartScript(bool hostWindowHidden) =>
+        WrapForHostWindow(TryStartScript, hostWindowHidden);
+
+    internal static string BuildTryStopScript(bool hostWindowHidden) =>
+        WrapForHostWindow(TryStopScript, hostWindowHidden);
+
+    internal static string BuildReadyToStartScript(bool hostWindowHidden) =>
+        WrapForHostWindow(ReadyToStartScript, hostWindowHidden);
+
+    internal static string BuildProbeStateScript(bool hostWindowHidden) =>
+        WrapForHostWindow(ProbeStateScript, hostWindowHidden);
 
     public bool TryBegin()
     {
@@ -260,5 +284,11 @@ internal sealed class ChatGptVoiceModeAutoStarter
         {
             return false;
         }
+    }
+
+    private static string WrapForHostWindow(string script, bool hostWindowHidden)
+    {
+        var hiddenLiteral = hostWindowHidden ? "true" : "false";
+        return $"((hostWindowHidden) => {script})({hiddenLiteral})";
     }
 }

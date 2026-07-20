@@ -390,7 +390,10 @@ public sealed class ChatGptWindowContractTests
             StringComparison.Ordinal);
         Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
         var handler = source[handlerStart..handlerEnd];
-        Assert.Contains("ChatGptVoiceModeAutoStarter.ProbeStateScript", handler, StringComparison.Ordinal);
+        Assert.Contains(
+            "ChatGptVoiceModeAutoStarter.BuildProbeStateScript(!Visible)",
+            handler,
+            StringComparison.Ordinal);
         Assert.Contains("_voiceWatchdog.Observe", handler, StringComparison.Ordinal);
         Assert.Contains("ChatGptVoiceWatchdogAction.Recover", handler, StringComparison.Ordinal);
         Assert.Contains("ChatGptVoiceWatchdogAction.Refresh", handler, StringComparison.Ordinal);
@@ -419,10 +422,14 @@ public sealed class ChatGptWindowContractTests
         Assert.True(methodStart >= 0 && methodEnd > methodStart);
         var method = source[methodStart..methodEnd];
 
-        var probe = method.IndexOf("ChatGptVoiceModeAutoStarter.ProbeStateScript", StringComparison.Ordinal);
+        var probe = method.IndexOf(
+            "ChatGptVoiceModeAutoStarter.BuildProbeStateScript(!Visible)",
+            StringComparison.Ordinal);
         var active = method.IndexOf("ChatGptVoiceModeState.Active", probe, StringComparison.Ordinal);
         var rearm = method.IndexOf("starter.Rearm()", StringComparison.Ordinal);
-        var stop = method.IndexOf("ChatGptVoiceModeAutoStarter.TryStopScript", StringComparison.Ordinal);
+        var stop = method.IndexOf(
+            "ChatGptVoiceModeAutoStarter.BuildTryStopScript(!Visible)",
+            StringComparison.Ordinal);
         var waitForStart = method.IndexOf("WaitForVoiceModeReadyToStartAsync(core)", StringComparison.Ordinal);
         var restart = method.IndexOf("TryAutoStartVoiceModeAsync(core)", StringComparison.Ordinal);
         Assert.True(probe >= 0
@@ -462,20 +469,31 @@ public sealed class ChatGptWindowContractTests
         var mute = handler.IndexOf("_voiceRefreshMuted = true", StringComparison.Ordinal);
         var forceZero = handler.IndexOf("ApplyOutputVolume(reportErrors: false)", mute, StringComparison.Ordinal);
         var guard = handler.IndexOf("_audioVolumeController.BeginMuteNewSessions()", forceZero, StringComparison.Ordinal);
-        var activate = handler.IndexOf("await activateVoiceMode()", guard, StringComparison.Ordinal);
+        var present = handler.IndexOf(
+            "BeginHiddenVoiceRefreshPresentation()",
+            guard,
+            StringComparison.Ordinal);
+        Assert.True(present >= 0, "Hidden Voice refresh presentation was not started.");
+        var activate = handler.IndexOf("await activateVoiceMode()", present, StringComparison.Ordinal);
         var active = handler.IndexOf("await WaitForVoiceModeActiveAsync(core)", activate, StringComparison.Ordinal);
         var tail = handler.IndexOf("Task.Delay(VoiceRefreshMuteTailMilliseconds)", active, StringComparison.Ordinal);
-        var disposeGuard = handler.IndexOf("sessionMuteScope?.Dispose()", tail, StringComparison.Ordinal);
+        var hide = handler.IndexOf(
+            "EndHiddenVoiceRefreshPresentation()",
+            tail,
+            StringComparison.Ordinal);
+        var disposeGuard = handler.IndexOf("sessionMuteScope?.Dispose()", hide, StringComparison.Ordinal);
         var unmute = handler.IndexOf("_voiceRefreshMuted = false", disposeGuard, StringComparison.Ordinal);
         var restore = handler.IndexOf("ApplyOutputVolume(reportErrors: false)", unmute, StringComparison.Ordinal);
         Assert.True(gate >= 0
             && gate < mute
             && mute < forceZero
             && forceZero < guard
-            && guard < activate
+            && guard < present
+            && present < activate
             && activate < active
             && active < tail
-            && tail < disposeGuard
+            && tail < hide
+            && hide < disposeGuard
             && disposeGuard < unmute
             && tail < unmute
             && unmute < restore);
@@ -508,8 +526,40 @@ public sealed class ChatGptWindowContractTests
         Assert.Contains("Opacity = 0", source, StringComparison.Ordinal);
         Assert.Contains("ShowInTaskbar = false", source, StringComparison.Ordinal);
         Assert.Contains(
-            "protected override bool ShowWithoutActivation => _hideAfterStartupInitialization;",
+            "protected override bool ShowWithoutActivation =>\n        _hideAfterStartupInitialization || _hiddenVoiceRefreshPresentationActive;",
             source,
+            StringComparison.Ordinal);
+
+        var beginPresentationStart = source.IndexOf(
+            "private bool BeginHiddenVoiceRefreshPresentation()",
+            StringComparison.Ordinal);
+        var beginPresentationEnd = source.IndexOf(
+            "private void EndHiddenVoiceRefreshPresentation()",
+            beginPresentationStart,
+            StringComparison.Ordinal);
+        Assert.True(beginPresentationStart >= 0 && beginPresentationEnd > beginPresentationStart);
+        var beginPresentation = source[beginPresentationStart..beginPresentationEnd];
+        Assert.Contains("_hiddenVoiceRefreshPresentationActive = true", beginPresentation, StringComparison.Ordinal);
+        Assert.Contains("Opacity = 0", beginPresentation, StringComparison.Ordinal);
+        Assert.Contains("ShowInTaskbar = false", beginPresentation, StringComparison.Ordinal);
+        Assert.Contains("Show()", beginPresentation, StringComparison.Ordinal);
+
+        var endPresentationEnd = source.IndexOf(
+            "protected override void Dispose",
+            beginPresentationEnd,
+            StringComparison.Ordinal);
+        Assert.True(endPresentationEnd > beginPresentationEnd);
+        var endPresentation = source[beginPresentationEnd..endPresentationEnd];
+        Assert.Contains("Hide()", endPresentation, StringComparison.Ordinal);
+        Assert.Contains("Opacity = 1", endPresentation, StringComparison.Ordinal);
+        Assert.Contains("ShowInTaskbar = true", endPresentation, StringComparison.Ordinal);
+
+        var showWindowStart = source.IndexOf("public void ShowWindow()", StringComparison.Ordinal);
+        var showWindowEnd = source.IndexOf("public void ExitApplication()", showWindowStart, StringComparison.Ordinal);
+        Assert.True(showWindowStart >= 0 && showWindowEnd > showWindowStart);
+        Assert.Contains(
+            "_hiddenVoiceRefreshPresentationActive = false",
+            source[showWindowStart..showWindowEnd],
             StringComparison.Ordinal);
 
         var shownStart = source.IndexOf("Shown += async", StringComparison.Ordinal);

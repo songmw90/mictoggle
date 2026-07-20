@@ -110,10 +110,26 @@ public sealed class ChatGptVoiceModeAutoStarterTests
         var probeProperty = type.GetProperty(
             "ProbeStateScript",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var buildStartMethod = type.GetMethod(
+            "BuildTryStartScript",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var buildStopMethod = type.GetMethod(
+            "BuildTryStopScript",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var buildReadyMethod = type.GetMethod(
+            "BuildReadyToStartScript",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        var buildProbeMethod = type.GetMethod(
+            "BuildProbeStateScript",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(startProperty);
         Assert.NotNull(stopProperty);
         Assert.NotNull(readyProperty);
         Assert.NotNull(probeProperty);
+        Assert.NotNull(buildStartMethod);
+        Assert.NotNull(buildStopMethod);
+        Assert.NotNull(buildReadyMethod);
+        Assert.NotNull(buildProbeMethod);
         var startScript = Assert.IsType<string>(startProperty!.GetValue(null));
         var stopScript = Assert.IsType<string>(stopProperty!.GetValue(null));
         var readyScript = Assert.IsType<string>(readyProperty!.GetValue(null));
@@ -121,10 +137,14 @@ public sealed class ChatGptVoiceModeAutoStarterTests
 
         var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {
-            startScript,
-            stopScript,
-            readyScript,
-            probeScript,
+            startScript = Assert.IsType<string>(buildStartMethod!.Invoke(null, [false])),
+            stopScript = Assert.IsType<string>(buildStopMethod!.Invoke(null, [false])),
+            readyScript = Assert.IsType<string>(buildReadyMethod!.Invoke(null, [false])),
+            probeScript = Assert.IsType<string>(buildProbeMethod!.Invoke(null, [false])),
+            hiddenStartScript = Assert.IsType<string>(buildStartMethod.Invoke(null, [true])),
+            hiddenStopScript = Assert.IsType<string>(buildStopMethod.Invoke(null, [true])),
+            hiddenReadyScript = Assert.IsType<string>(buildReadyMethod.Invoke(null, [true])),
+            hiddenProbeScript = Assert.IsType<string>(buildProbeMethod.Invoke(null, [true])),
         })));
 
         using var process = Process.Start(new ProcessStartInfo
@@ -208,10 +228,12 @@ public sealed class ChatGptVoiceModeAutoStarterTests
         const vm = require('node:vm');
         const payload = JSON.parse(Buffer.from(process.argv[1], 'base64').toString('utf8'));
 
-        function execute(script, descriptors) {
+        function execute(script, descriptors, visibilityState = 'visible') {
           const buttons = descriptors.map(value => ({
             label: typeof value === 'string' ? value : value.label,
             visible: typeof value === 'string' || value.visible !== false,
+            display: typeof value === 'string' ? 'block' : value.display || 'block',
+            visibility: typeof value === 'string' ? 'visible' : value.visibility || 'visible',
             disabled: false,
             clicked: false,
             getAttribute(name) {
@@ -228,14 +250,15 @@ public sealed class ChatGptVoiceModeAutoStarterTests
           }));
           const context = {
             document: {
+              visibilityState,
               querySelectorAll(selector) {
                 assert.equal(selector, 'button');
                 return buttons;
               }
             },
             window: {
-              getComputedStyle() {
-                return { display: 'block', visibility: 'visible' };
+              getComputedStyle(button) {
+                return { display: button.display, visibility: button.visibility };
               }
             }
           };
@@ -287,5 +310,39 @@ public sealed class ChatGptVoiceModeAutoStarterTests
 
         execution = execute(payload.probeScript, ['받아쓰기 시작']);
         assert.equal(execution.result.state, 'unknown');
+
+        execution = execute(
+          payload.hiddenStopScript,
+          [{ label: 'Voice 끝내기', visible: false }],
+          'visible');
+        assert.equal(execution.result.stopped, true);
+        assert.equal(execution.buttons[0].clicked, true);
+
+        execution = execute(
+          payload.hiddenReadyScript,
+          [{ label: 'Voice 시작', visible: false }],
+          'visible');
+        assert.equal(execution.result.ready, true);
+
+        execution = execute(
+          payload.hiddenStartScript,
+          [{ label: 'Voice 시작', visible: false }],
+          'visible');
+        assert.equal(execution.result.started, true);
+        assert.equal(execution.result.clicked, true);
+        assert.equal(execution.buttons[0].clicked, true);
+
+        execution = execute(
+          payload.hiddenProbeScript,
+          [{ label: 'Voice 끝내기', visible: false }],
+          'visible');
+        assert.equal(execution.result.state, 'active');
+
+        execution = execute(
+          payload.hiddenStopScript,
+          [{ label: 'Voice 끝내기', visible: false, display: 'none' }],
+          'visible');
+        assert.equal(execution.result.stopped, false);
+        assert.equal(execution.buttons[0].clicked, false);
         """;
 }

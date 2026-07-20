@@ -2,6 +2,17 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.8 - 2026-07-21
+
+- Restores Voice mode while MicToggle is hidden in the notification area.
+- Prevents hidden WebView controls from causing a repeated silent-refresh loop.
+
+## 0.1.7 - 2026-07-21
+
+- Recycles Voice mode after five idle minutes even when a stale session still looks active in the page.
+- Mutes both WebView2 and newly created Windows audio sessions during automatic Voice reconnection.
+- Waits for Voice initialization before completing hidden startup.
+
 ## 0.1.5 - 2026-07-19
 
 - Recovers stalled Voice sessions whose live action changes to `Cancel loading` or `로딩 취소`.

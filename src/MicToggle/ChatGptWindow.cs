@@ -19,6 +19,8 @@ internal sealed class ChatGptWindow : Form
     private const int VoiceLoadingRecoveryThresholdSeconds = 45;
     private const int VoiceIdleRestartIntervalMinutes = 5;
     private const int VoiceRefreshMuteTailMilliseconds = 500;
+    private const int HiddenVoicePresentationAttempts = 10;
+    private const int HiddenVoicePresentationDelayMilliseconds = 50;
 
     private static readonly Color WindowBackground = Color.FromArgb(17, 19, 21);
     private static readonly Color HeaderBackground = Color.FromArgb(24, 26, 29);
@@ -130,6 +132,7 @@ internal sealed class ChatGptWindow : Form
     private WebView2? _webView;
     private bool _allowClose;
     private bool _hideAfterStartupInitialization;
+    private bool _hiddenVoiceRefreshPresentationActive;
     private bool _voiceRefreshMuted;
 
     public ChatGptWindow(bool startHidden = false)
@@ -196,7 +199,8 @@ internal sealed class ChatGptWindow : Form
         WindowTheme.ApplyDarkTitleBar(Handle);
     }
 
-    protected override bool ShowWithoutActivation => _hideAfterStartupInitialization;
+    protected override bool ShowWithoutActivation =>
+        _hideAfterStartupInitialization || _hiddenVoiceRefreshPresentationActive;
 
     private void CompleteHiddenStartup()
     {
@@ -206,6 +210,48 @@ internal sealed class ChatGptWindow : Form
         }
 
         _hideAfterStartupInitialization = false;
+        Hide();
+        Opacity = 1;
+        ShowInTaskbar = true;
+    }
+
+    private bool BeginHiddenVoiceRefreshPresentation()
+    {
+        if (Visible)
+        {
+            return false;
+        }
+
+        _hiddenVoiceRefreshPresentationActive = true;
+        Opacity = 0;
+        ShowInTaskbar = false;
+        if (WindowState == FormWindowState.Minimized)
+        {
+            WindowState = FormWindowState.Normal;
+        }
+
+        try
+        {
+            Show();
+            return true;
+        }
+        catch
+        {
+            _hiddenVoiceRefreshPresentationActive = false;
+            Opacity = 1;
+            ShowInTaskbar = true;
+            throw;
+        }
+    }
+
+    private void EndHiddenVoiceRefreshPresentation()
+    {
+        if (!_hiddenVoiceRefreshPresentationActive || IsDisposed)
+        {
+            return;
+        }
+
+        _hiddenVoiceRefreshPresentationActive = false;
         Hide();
         Opacity = 1;
         ShowInTaskbar = true;
@@ -374,6 +420,7 @@ internal sealed class ChatGptWindow : Form
         }
 
         _hideAfterStartupInitialization = false;
+        _hiddenVoiceRefreshPresentationActive = false;
         Opacity = 1;
         ShowInTaskbar = true;
         Show();
@@ -1000,7 +1047,7 @@ internal sealed class ChatGptWindow : Form
                 }
 
                 var result = await core.ExecuteScriptAsync(
-                    ChatGptVoiceModeAutoStarter.TryStartScript);
+                    ChatGptVoiceModeAutoStarter.BuildTryStartScript(!Visible));
                 if (ChatGptVoiceModeAutoStarter.DidStart(result))
                 {
                     started = true;
@@ -1046,7 +1093,7 @@ internal sealed class ChatGptWindow : Form
             }
 
             var result = await core.ExecuteScriptAsync(
-                ChatGptVoiceModeAutoStarter.ProbeStateScript);
+                ChatGptVoiceModeAutoStarter.BuildProbeStateScript(!Visible));
             var state = ChatGptVoiceModeAutoStarter.ReadVoiceModeState(result);
             var observedAt = DateTimeOffset.UtcNow;
             if (_microphoneStateHost.Enabled)
@@ -1102,6 +1149,7 @@ internal sealed class ChatGptWindow : Form
     {
         await _voiceActivationGate.WaitAsync();
         var mutedForRefresh = false;
+        var presentedForHiddenRefresh = false;
         IDisposable? sessionMuteScope = null;
         try
         {
@@ -1117,6 +1165,12 @@ internal sealed class ChatGptWindow : Form
                 // WebView muting and periodic session volume enforcement remain as fallbacks.
             }
 
+            presentedForHiddenRefresh = BeginHiddenVoiceRefreshPresentation();
+            if (presentedForHiddenRefresh)
+            {
+                await WaitForVoiceControlsRenderableAsync(core);
+            }
+
             var started = await activateVoiceMode();
             if (started)
             {
@@ -1128,6 +1182,11 @@ internal sealed class ChatGptWindow : Form
         }
         finally
         {
+            if (presentedForHiddenRefresh)
+            {
+                EndHiddenVoiceRefreshPresentation();
+            }
+
             try
             {
                 sessionMuteScope?.Dispose();
@@ -1157,7 +1216,7 @@ internal sealed class ChatGptWindow : Form
             }
 
             var result = await core.ExecuteScriptAsync(
-                ChatGptVoiceModeAutoStarter.ProbeStateScript);
+                ChatGptVoiceModeAutoStarter.BuildProbeStateScript(!Visible));
             if (ChatGptVoiceModeAutoStarter.ReadVoiceModeState(result)
                 == ChatGptVoiceModeState.Active)
             {
@@ -1165,6 +1224,27 @@ internal sealed class ChatGptWindow : Form
             }
 
             await Task.Delay(VoiceModeStartRetryDelayMilliseconds);
+        }
+    }
+
+    private async Task WaitForVoiceControlsRenderableAsync(CoreWebView2 core)
+    {
+        for (var attempt = 0; attempt < HiddenVoicePresentationAttempts; attempt++)
+        {
+            if (!IsCurrentVoiceCore(core))
+            {
+                return;
+            }
+
+            var result = await core.ExecuteScriptAsync(
+                ChatGptVoiceModeAutoStarter.BuildProbeStateScript(hostWindowHidden: false));
+            if (ChatGptVoiceModeAutoStarter.ReadVoiceModeState(result)
+                != ChatGptVoiceModeState.Unknown)
+            {
+                return;
+            }
+
+            await Task.Delay(HiddenVoicePresentationDelayMilliseconds);
         }
     }
 
@@ -1226,7 +1306,7 @@ internal sealed class ChatGptWindow : Form
             if (!forceRestart)
             {
                 var currentResult = await core.ExecuteScriptAsync(
-                    ChatGptVoiceModeAutoStarter.ProbeStateScript);
+                    ChatGptVoiceModeAutoStarter.BuildProbeStateScript(!Visible));
                 if (ChatGptVoiceModeAutoStarter.ReadVoiceModeState(currentResult)
                     == ChatGptVoiceModeState.Active)
                 {
@@ -1241,7 +1321,7 @@ internal sealed class ChatGptWindow : Form
 
             SetStatus("Restoring voice mode...");
             var stopResult = await core.ExecuteScriptAsync(
-                ChatGptVoiceModeAutoStarter.TryStopScript);
+                ChatGptVoiceModeAutoStarter.BuildTryStopScript(!Visible));
             if (ChatGptVoiceModeAutoStarter.DidStop(stopResult)
                 && !await WaitForVoiceModeReadyToStartAsync(core))
             {
@@ -1281,7 +1361,7 @@ internal sealed class ChatGptWindow : Form
             }
 
             var result = await core.ExecuteScriptAsync(
-                ChatGptVoiceModeAutoStarter.ReadyToStartScript);
+                ChatGptVoiceModeAutoStarter.BuildReadyToStartScript(!Visible));
             if (ChatGptVoiceModeAutoStarter.IsReadyToStart(result))
             {
                 return true;

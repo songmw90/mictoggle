@@ -20,6 +20,8 @@ public sealed class CtrlAltTriggerTests
         Assert.Contains("_stop.Wait(PollIntervalMilliseconds)", source, StringComparison.Ordinal);
         Assert.DoesNotContain("SetWindowsHookEx", source, StringComparison.Ordinal);
         Assert.DoesNotContain("WH_KEYBOARD_LL", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ThreadPool.", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ConcurrentQueue", source, StringComparison.Ordinal);
     }
 
     [Fact]

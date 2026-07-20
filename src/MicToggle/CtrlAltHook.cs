@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 
 namespace MicToggle;
@@ -10,11 +9,9 @@ internal sealed class CtrlAltHook : IDisposable
 
     private readonly Action<Action> _dispatch;
     private readonly Func<Keys, bool> _isKeyDown;
-    private readonly ConcurrentQueue<EventHandler> _pendingEvents = new();
     private readonly ManualResetEventSlim _stop = new(false);
     private Thread? _pollThread;
     private bool _chordActive;
-    private int _eventDrainScheduled;
     private int _disposed;
 
     internal CtrlAltHook(Action<Action> dispatch)
@@ -100,51 +97,30 @@ internal sealed class CtrlAltHook : IDisposable
         }
 
         _chordActive = chordPressed;
-        QueueEvent(chordPressed ? Pressed : Released);
+        DispatchEvent(chordPressed ? Pressed : Released);
     }
 
-    private void QueueEvent(EventHandler? handler)
+    private void DispatchEvent(EventHandler? handler)
     {
         if (handler is null || Volatile.Read(ref _disposed) != 0)
         {
             return;
         }
 
-        _pendingEvents.Enqueue(handler);
-        if (Interlocked.CompareExchange(ref _eventDrainScheduled, 1, 0) == 0)
+        try
         {
-            ThreadPool.UnsafeQueueUserWorkItem(
-                static trigger => trigger.DrainQueuedEvents(),
-                this,
-                preferLocal: false);
-        }
-    }
-
-    private void DrainQueuedEvents()
-    {
-        do
-        {
-            while (_pendingEvents.TryDequeue(out var handler))
+            _dispatch(() =>
             {
-                if (Volatile.Read(ref _disposed) != 0)
+                if (Volatile.Read(ref _disposed) == 0)
                 {
-                    continue;
+                    handler(this, EventArgs.Empty);
                 }
-
-                try
-                {
-                    _dispatch(() => handler(this, EventArgs.Empty));
-                }
-                catch (InvalidOperationException)
-                {
-                    // The UI dispatcher can disappear while the application is shutting down.
-                }
-            }
-
-            Interlocked.Exchange(ref _eventDrainScheduled, 0);
+            });
         }
-        while (!_pendingEvents.IsEmpty &&
-               Interlocked.CompareExchange(ref _eventDrainScheduled, 1, 0) == 0);
+        catch (InvalidOperationException)
+        {
+            // The UI dispatcher can disappear while the application is shutting down.
+        }
     }
 
     [DllImport("user32.dll")]

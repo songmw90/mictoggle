@@ -2,6 +2,11 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.13 - 2026-07-21
+
+- Dispatches push-to-talk state changes directly from the polling thread to the UI queue.
+- Removes the extra thread-pool hop that could delay modifier-state delivery under load.
+
 ## 0.1.12 - 2026-07-21
 
 - Pre-creates the activity-frame window handles during startup.

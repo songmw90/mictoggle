@@ -442,7 +442,7 @@ public sealed class ChatGptWindowContractTests
     }
 
     [Fact]
-    public void Automatic_voice_activation_mutes_new_sessions_until_the_dom_is_active()
+    public void Automatic_voice_activation_keeps_new_sessions_muted_while_audio_settles()
     {
         var repositoryRoot = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -451,7 +451,7 @@ public sealed class ChatGptWindowContractTests
             "MicToggle",
             "ChatGptWindow.cs"));
         Assert.Contains(
-            "private const int VoiceRefreshMuteTailMilliseconds = 500;",
+            "private const int VoiceRefreshMuteTailMilliseconds = 2000;",
             source,
             StringComparison.Ordinal);
 

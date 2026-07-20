@@ -18,7 +18,7 @@ internal sealed class ChatGptWindow : Form
     private const int VoiceWatchdogIntervalMilliseconds = 1000;
     private const int VoiceLoadingRecoveryThresholdSeconds = 45;
     private const int VoiceIdleRestartIntervalMinutes = 5;
-    private const int VoiceRefreshMuteTailMilliseconds = 500;
+    private const int VoiceRefreshMuteTailMilliseconds = 2000;
     private const int HiddenVoicePresentationAttempts = 10;
     private const int HiddenVoicePresentationDelayMilliseconds = 50;
 

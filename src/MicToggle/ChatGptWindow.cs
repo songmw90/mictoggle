@@ -21,6 +21,8 @@ internal sealed class ChatGptWindow : Form
     private const int VoiceRefreshMuteTailMilliseconds = 2000;
     private const int HiddenVoicePresentationAttempts = 10;
     private const int HiddenVoicePresentationDelayMilliseconds = 50;
+    private const int NavigationRetryInitialDelaySeconds = 1;
+    private const int NavigationRetryMaximumDelaySeconds = 30;
 
     private static readonly Color WindowBackground = Color.FromArgb(17, 19, 21);
     private static readonly Color HeaderBackground = Color.FromArgb(24, 26, 29);
@@ -111,6 +113,7 @@ internal sealed class ChatGptWindow : Form
     private readonly ChatGptFrameRegistry _frameRegistry = new();
     private readonly ChatGptTopLevelHostGate _topLevelHostGate = new();
     private readonly Dictionary<uint, CoreWebView2Frame> _frames = [];
+    private readonly Dictionary<ulong, string> _topLevelNavigationUris = [];
     private readonly WebViewAudioVolumeController _audioVolumeController = new(Environment.ProcessId);
     private readonly OutputVolumeStore _outputVolumeStore = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -127,6 +130,9 @@ internal sealed class ChatGptWindow : Form
     private readonly ChatGptVoiceWatchdog _voiceWatchdog = new(
         TimeSpan.FromSeconds(VoiceLoadingRecoveryThresholdSeconds),
         TimeSpan.FromMinutes(VoiceIdleRestartIntervalMinutes));
+    private readonly ChatGptNavigationRetry _navigationRetry = new(
+        TimeSpan.FromSeconds(NavigationRetryInitialDelaySeconds),
+        TimeSpan.FromSeconds(NavigationRetryMaximumDelaySeconds));
 
     private ChatGptVoiceModeAutoStarter _voiceModeAutoStarter = new();
     private WebView2? _webView;
@@ -469,6 +475,8 @@ internal sealed class ChatGptWindow : Form
             core.IsMuted = _outputVolumeSlider.Value == 0;
             ApplyOutputVolume(reportErrors: false);
             _topLevelHostGate.Clear();
+            _topLevelNavigationUris.Clear();
+            _navigationRetry.Reset();
             _microphoneStateHost.SetAccessAllowed(false);
             core.AddHostObjectToScript(
                 ChatGptMicrophoneBridge.HostObjectName,
@@ -619,6 +627,7 @@ internal sealed class ChatGptWindow : Form
         object? sender,
         CoreWebView2NavigationStartingEventArgs args)
     {
+        _topLevelNavigationUris[args.NavigationId] = args.Uri;
         // Keep the outgoing bridge commandable so a release can mute it before commit.
         _state.ObserveNavigationStarting();
         SetStatus("Loading ChatGPT...");
@@ -656,6 +665,8 @@ internal sealed class ChatGptWindow : Form
         object? sender,
         CoreWebView2NavigationCompletedEventArgs args)
     {
+        _topLevelNavigationUris.TryGetValue(args.NavigationId, out var navigationUri);
+        _topLevelNavigationUris.Remove(args.NavigationId);
         try
         {
             _topLevelHostGate.CompleteNavigation(
@@ -685,10 +696,20 @@ internal sealed class ChatGptWindow : Form
 
             if (failureStatus is not null)
             {
-                SetStatus(failureStatus);
+                if (ChatGptNavigationPolicy.IsRecoverableGatewayUri(navigationUri))
+                {
+                    _navigationRetry.RecordFailure(DateTimeOffset.UtcNow);
+                    SetStatus("ChatGPT connection failed. Retrying...");
+                }
+                else
+                {
+                    SetStatus(failureStatus);
+                }
+
                 return;
             }
 
+            _navigationRetry.Reset();
             if (core is not null)
             {
                 await StartVoiceModeSilentlyAsync(core);
@@ -1005,6 +1026,8 @@ internal sealed class ChatGptWindow : Form
     {
         _voiceModeAutoStarter = new ChatGptVoiceModeAutoStarter();
         _voiceWatchdog.Reset();
+        _navigationRetry.Reset();
+        _topLevelNavigationUris.Clear();
         var replacement = new WebView2 { Dock = DockStyle.Fill };
         _webView = replacement;
         _webViewHost.Controls.Add(replacement);
@@ -1087,6 +1110,12 @@ internal sealed class ChatGptWindow : Form
         _voiceWatchdogTimer.Stop();
         try
         {
+            var observedAt = DateTimeOffset.UtcNow;
+            if (TryRecoverGatewayNavigation(observedAt))
+            {
+                return;
+            }
+
             var core = GetVoiceRecoveryCore();
             if (core is null)
             {
@@ -1097,7 +1126,6 @@ internal sealed class ChatGptWindow : Form
             var result = await core.ExecuteScriptAsync(
                 ChatGptVoiceModeAutoStarter.BuildProbeStateScript(!Visible));
             var state = ChatGptVoiceModeAutoStarter.ReadVoiceModeState(result);
-            var observedAt = DateTimeOffset.UtcNow;
             if (_microphoneStateHost.Enabled)
             {
                 _voiceWatchdog.RecordActivity(observedAt);
@@ -1127,6 +1155,30 @@ internal sealed class ChatGptWindow : Form
         {
             RestartVoiceWatchdogTimer();
         }
+    }
+
+    private bool TryRecoverGatewayNavigation(DateTimeOffset observedAt)
+    {
+        if (!_navigationRetry.ShouldRetry(observedAt))
+        {
+            return false;
+        }
+
+        var webView = _webView;
+        var core = webView?.CoreWebView2;
+        if (IsDisposed
+            || Disposing
+            || webView is null
+            || webView.IsDisposed
+            || core is null
+            || _state.NavigationInProgress)
+        {
+            return true;
+        }
+
+        SetStatus("Reconnecting ChatGPT...");
+        core.Navigate(HomeAddress);
+        return true;
     }
 
     private Task<bool> StartVoiceModeSilentlyAsync(CoreWebView2 core)

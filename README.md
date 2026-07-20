@@ -13,11 +13,12 @@ subject to the [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/).
 ## Features
 
 - Hold `Left Ctrl + Alt` to talk; release either key to mute ChatGPT again.
-- Shows a thin mint frame around the current monitor while push-to-talk is held;
-  the frame brightens when the ChatGPT microphone receives actual input.
+- Shows a thin mint frame around every connected monitor while push-to-talk is
+  held; the frame brightens when the ChatGPT microphone receives actual input.
 - Starts ChatGPT voice mode automatically when the page exposes the voice button.
 - Checks voice mode every second, immediately restarts it when inactive, and
   recovers a loading screen only after it remains stuck for 45 seconds.
+- Retries ChatGPT automatically when a transient OpenAI gateway redirect fails.
 - Silently reconnects voice mode after five minutes without push-to-talk input,
   including sessions whose UI still looks active but no longer responds.
 - Uses a dedicated WebView2 profile, so it does not control or depend on Chrome.

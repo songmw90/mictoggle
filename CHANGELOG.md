@@ -2,6 +2,11 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.14 - 2026-07-21
+
+- Recovers automatically when an OpenAI ChatGPT gateway redirect fails.
+- Retries the ChatGPT home page with exponential backoff instead of remaining on the gateway error page.
+
 ## 0.1.13 - 2026-07-21
 
 - Dispatches push-to-talk state changes directly from the polling thread to the UI queue.

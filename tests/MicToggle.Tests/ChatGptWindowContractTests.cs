@@ -21,7 +21,7 @@ public sealed class ChatGptWindowContractTests
     }
 
     [Fact]
-    public void Navigation_handler_does_not_cancel_or_replay_requests()
+    public void Navigation_handler_tracks_target_uris_without_replaying_requests()
     {
         var repositoryRoot = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -39,10 +39,26 @@ public sealed class ChatGptWindowContractTests
         Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
         var handler = source[handlerStart..handlerEnd];
 
-        Assert.DoesNotContain(".Cancel", handler, StringComparison.Ordinal);
         Assert.DoesNotContain("Navigate(", handler, StringComparison.Ordinal);
+        Assert.Contains("_topLevelNavigationUris[args.NavigationId] = args.Uri", handler, StringComparison.Ordinal);
         Assert.Contains("args.Uri", handler, StringComparison.Ordinal);
         Assert.Contains("args.NavigationId", handler, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Failed_gateway_navigation_is_retried_by_the_existing_watchdog()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "MicToggle",
+            "ChatGptWindow.cs"));
+
+        Assert.Contains("_navigationRetry.RecordFailure(DateTimeOffset.UtcNow)", source, StringComparison.Ordinal);
+        Assert.Contains("_navigationRetry.ShouldRetry(observedAt)", source, StringComparison.Ordinal);
+        Assert.Contains("core.Navigate(HomeAddress)", source, StringComparison.Ordinal);
+        Assert.Contains("_navigationRetry.Reset()", source, StringComparison.Ordinal);
+        Assert.Contains("ChatGptNavigationPolicy.IsRecoverableGatewayUri", source, StringComparison.Ordinal);
     }
 
     [Fact]

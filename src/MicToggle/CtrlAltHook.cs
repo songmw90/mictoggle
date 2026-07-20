@@ -1,31 +1,31 @@
-using System.ComponentModel;
-using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 
 namespace MicToggle;
 
 internal sealed class CtrlAltHook : IDisposable
 {
-    private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100;
-    private const int WM_KEYUP = 0x0101;
-    private const int WM_SYSKEYDOWN = 0x0104;
-    private const int WM_SYSKEYUP = 0x0105;
+    private const int PollIntervalMilliseconds = 5;
+    private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(2);
 
-    private readonly LowLevelKeyboardProc _proc;
-    private readonly Func<IntPtr, int, IntPtr, IntPtr, IntPtr> _callNextHook;
-    private readonly HashSet<Keys> _pressedKeys = [];
-    private IntPtr _hookId;
+    private readonly Action<Action> _dispatch;
+    private readonly Func<Keys, bool> _isKeyDown;
+    private readonly ConcurrentQueue<EventHandler> _pendingEvents = new();
+    private readonly ManualResetEventSlim _stop = new(false);
+    private Thread? _pollThread;
     private bool _chordActive;
+    private int _eventDrainScheduled;
+    private int _disposed;
 
-    public CtrlAltHook() : this(CallNextHookEx)
+    internal CtrlAltHook(Action<Action> dispatch)
+        : this(dispatch, IsNativeKeyDown)
     {
     }
 
-    internal CtrlAltHook(Func<IntPtr, int, IntPtr, IntPtr, IntPtr> callNextHook)
+    internal CtrlAltHook(Action<Action> dispatch, Func<Keys, bool> isKeyDown)
     {
-        _callNextHook = callNextHook ?? throw new ArgumentNullException(nameof(callNextHook));
-        _proc = HookCallback;
+        _dispatch = dispatch ?? throw new ArgumentNullException(nameof(dispatch));
+        _isKeyDown = isKeyDown ?? throw new ArgumentNullException(nameof(isKeyDown));
     }
 
     public event EventHandler? Pressed;
@@ -33,102 +33,120 @@ internal sealed class CtrlAltHook : IDisposable
 
     public void Start()
     {
-        if (_hookId != IntPtr.Zero)
+        ObjectDisposedException.ThrowIf(_disposed != 0, this);
+        if (_pollThread is not null)
         {
             return;
         }
 
-        _hookId = SetHook(_proc);
-        if (_hookId == IntPtr.Zero)
+        _pollThread = new Thread(RunPollingLoop)
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to install keyboard hook.");
-        }
+            IsBackground = true,
+            Name = "MicToggle Ctrl+Alt trigger",
+        };
+        _pollThread.Start();
     }
 
     public void Dispose()
     {
-        if (_hookId == IntPtr.Zero)
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;
         }
 
-        UnhookWindowsHookEx(_hookId);
-        _hookId = IntPtr.Zero;
-    }
-
-    private static IntPtr SetHook(LowLevelKeyboardProc proc)
-    {
-        using var currentProcess = Process.GetCurrentProcess();
-        using var currentModule = currentProcess.MainModule;
-        return SetWindowsHookEx(
-            WH_KEYBOARD_LL,
-            proc,
-            GetModuleHandle(currentModule?.ModuleName),
-            0);
-    }
-
-    private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
-    {
-        if (nCode >= 0)
+        _stop.Set();
+        var pollThread = _pollThread;
+        if (pollThread is not null &&
+            pollThread.IsAlive &&
+            Thread.CurrentThread != pollThread)
         {
-            var message = wParam.ToInt32();
-            var key = (Keys)Marshal.ReadInt32(lParam);
-            if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
+            pollThread.Join(ShutdownTimeout);
+        }
+
+        if (pollThread is null || !pollThread.IsAlive)
+        {
+            _stop.Dispose();
+        }
+    }
+
+    private void RunPollingLoop()
+    {
+        while (!_stop.IsSet)
+        {
+            UpdateChordState(IsChordPressed(_isKeyDown));
+            if (_stop.Wait(PollIntervalMilliseconds))
             {
-                UpdateKeyState(key, true);
-            }
-            else if (message == WM_KEYUP || message == WM_SYSKEYUP)
-            {
-                UpdateKeyState(key, false);
+                return;
             }
         }
-
-        return _callNextHook(_hookId, nCode, wParam, lParam);
     }
 
-    private void UpdateKeyState(Keys key, bool isDown)
+    private static bool IsChordPressed(Func<Keys, bool> isKeyDown)
     {
-        if (isDown)
+        return isKeyDown(Keys.LControlKey) &&
+            (isKeyDown(Keys.LMenu) || isKeyDown(Keys.RMenu));
+    }
+
+    private static bool IsNativeKeyDown(Keys key)
+    {
+        return (GetAsyncKeyState((int)key) & 0x8000) != 0;
+    }
+
+    private void UpdateChordState(bool chordPressed)
+    {
+        if (chordPressed == _chordActive)
         {
-            _pressedKeys.Add(key);
-        }
-        else
-        {
-            _pressedKeys.Remove(key);
+            return;
         }
 
-        var chordPressed =
-            (_pressedKeys.Contains(Keys.LControlKey) || _pressedKeys.Contains(Keys.ControlKey)) &&
-            (_pressedKeys.Contains(Keys.LMenu) || _pressedKeys.Contains(Keys.RMenu) || _pressedKeys.Contains(Keys.Menu));
+        _chordActive = chordPressed;
+        QueueEvent(chordPressed ? Pressed : Released);
+    }
 
-        if (chordPressed && !_chordActive)
+    private void QueueEvent(EventHandler? handler)
+    {
+        if (handler is null || Volatile.Read(ref _disposed) != 0)
         {
-            _chordActive = true;
-            Pressed?.Invoke(this, EventArgs.Empty);
+            return;
         }
-        else if (!chordPressed && _chordActive)
+
+        _pendingEvents.Enqueue(handler);
+        if (Interlocked.CompareExchange(ref _eventDrainScheduled, 1, 0) == 0)
         {
-            _chordActive = false;
-            Released?.Invoke(this, EventArgs.Empty);
+            ThreadPool.UnsafeQueueUserWorkItem(
+                static trigger => trigger.DrainQueuedEvents(),
+                this,
+                preferLocal: false);
         }
     }
 
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    private void DrainQueuedEvents()
+    {
+        do
+        {
+            while (_pendingEvents.TryDequeue(out var handler))
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    continue;
+                }
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SetWindowsHookEx(
-        int idHook,
-        LowLevelKeyboardProc lpfn,
-        IntPtr hMod,
-        uint dwThreadId);
+                try
+                {
+                    _dispatch(() => handler(this, EventArgs.Empty));
+                }
+                catch (InvalidOperationException)
+                {
+                    // The UI dispatcher can disappear while the application is shutting down.
+                }
+            }
 
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+            Interlocked.Exchange(ref _eventDrainScheduled, 0);
+        }
+        while (!_pendingEvents.IsEmpty &&
+               Interlocked.CompareExchange(ref _eventDrainScheduled, 1, 0) == 0);
+    }
 
     [DllImport("user32.dll")]
-    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern IntPtr GetModuleHandle(string? lpModuleName);
+    private static extern short GetAsyncKeyState(int virtualKey);
 }

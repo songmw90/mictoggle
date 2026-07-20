@@ -57,10 +57,9 @@ ChatGPT traffic goes directly through the embedded WebView2 browser. The app
 stores its separate browser profile under `%LOCALAPPDATA%\MicToggle\WebView2`
 and its output-volume setting under `%LOCALAPPDATA%\MicToggle`.
 
-The app installs a Windows low-level keyboard hook to recognize the fixed
-push-to-talk chord. It keeps only current key state in memory, forwards every
-event to Windows, and does not log or transmit keystrokes. See [PRIVACY.md](PRIVACY.md)
-for the complete behavior disclosure.
+The app checks the current `Left Ctrl + Alt` state on a short background wait
+loop. It does not install a keyboard hook, suppress input, or log or transmit
+keystrokes. See [PRIVACY.md](PRIVACY.md) for the complete behavior disclosure.
 
 ## Project status
 

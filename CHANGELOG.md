@@ -2,6 +2,12 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.12 - 2026-07-21
+
+- Pre-creates the activity-frame window handles during startup.
+- Uses lightweight native visibility and opacity updates to remove push-to-talk overlay lag.
+- Replaces the low-level keyboard hook with non-blocking modifier-state polling so other input is not delayed.
+
 ## 0.1.11 - 2026-07-21
 
 - Shows the microphone activity frame on every connected monitor while push-to-talk is held.

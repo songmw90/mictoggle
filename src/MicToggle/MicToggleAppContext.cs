@@ -4,7 +4,7 @@ internal sealed class MicToggleAppContext : ApplicationContext
 {
     private readonly NotifyIcon _trayIcon;
     private readonly Icon _trayIconAsset;
-    private readonly CtrlAltHook _hook = new();
+    private readonly CtrlAltHook _hook;
     private readonly ChatGptWindow _window;
     private readonly MicrophoneActivityOverlay _activityOverlay = new();
     private bool _isHolding;
@@ -12,6 +12,7 @@ internal sealed class MicToggleAppContext : ApplicationContext
     public MicToggleAppContext(bool startHidden)
     {
         _window = new ChatGptWindow(startHidden);
+        _hook = new CtrlAltHook(action => _ = _window.BeginInvoke(action));
         var menu = new ContextMenuStrip();
         menu.Items.Add("Show MicToggle", null, (_, _) => _window.ShowWindow());
         menu.Items.Add(new ToolStripSeparator());
@@ -37,7 +38,7 @@ internal sealed class MicToggleAppContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            ShowBalloon("MicToggle hook failed", ex.Message, ToolTipIcon.Error);
+            ShowBalloon("MicToggle trigger failed", ex.Message, ToolTipIcon.Error);
         }
     }
 

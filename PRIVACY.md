@@ -29,12 +29,11 @@ To remove local MicToggle data, exit the app and delete
 `%LOCALAPPDATA%\MicToggle`. This signs the embedded browser out and resets local
 settings.
 
-## Keyboard hook
+## Keyboard trigger
 
-MicToggle installs a Windows low-level keyboard hook while it is running. The
-hook recognizes `Left Ctrl + Alt`, retains only the current pressed-key state in
-memory, and immediately forwards each event to the next Windows hook. It does
-not record, persist, suppress, or transmit keystrokes.
+MicToggle checks whether `Left Ctrl + Alt` is currently held on a short
+background wait loop. It does not install a keyboard hook or intercept Windows
+input events. It does not record, persist, suppress, or transmit keystrokes.
 
 ## Microphone control
 

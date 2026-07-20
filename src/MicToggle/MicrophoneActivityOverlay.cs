@@ -5,12 +5,24 @@ namespace MicToggle;
 internal sealed class MicrophoneActivityOverlay : IDisposable
 {
     private const int EdgeThickness = 4;
+    private const uint SWP_NOSIZE = 0x0001;
+    private const uint SWP_NOMOVE = 0x0002;
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_NOACTIVATE = 0x0010;
+    private const uint SWP_SHOWWINDOW = 0x0040;
+    private const uint SWP_HIDEWINDOW = 0x0080;
+    private static readonly IntPtr HwndTopmost = new(-1);
 
     private readonly List<ActivityEdgeWindow> _edges = [];
     private int _activeEdgeCount;
     private bool _visible;
 
     internal static Color AccentColor { get; } = Color.FromArgb(76, 217, 130);
+
+    public MicrophoneActivityOverlay()
+    {
+        EnsureEdgeCount(Screen.AllScreens.Length * 4);
+    }
 
     public void ShowForAllScreens()
     {
@@ -20,15 +32,8 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
         EnsureEdgeCount(edgeBounds.Length);
 
         var opacity = CalculateOpacity(trackConnected: false, level: 0);
-        for (var index = 0; index < edgeBounds.Length; index++)
-        {
-            _edges[index].ShowEdge(edgeBounds[index], AccentColor, opacity);
-        }
-
-        for (var index = edgeBounds.Length; index < _edges.Count; index++)
-        {
-            _edges[index].Hide();
-        }
+        ShowEdges(edgeBounds, opacity);
+        HideEdges(edgeBounds.Length, _edges.Count - edgeBounds.Length);
 
         _activeEdgeCount = edgeBounds.Length;
         _visible = _activeEdgeCount > 0;
@@ -44,7 +49,7 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
         var opacity = CalculateOpacity(trackConnected, level);
         for (var index = 0; index < _activeEdgeCount; index++)
         {
-            _edges[index].Opacity = opacity;
+            _edges[index].SetOpacity(opacity);
         }
     }
 
@@ -52,10 +57,7 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
     {
         _visible = false;
         _activeEdgeCount = 0;
-        foreach (var edge in _edges)
-        {
-            edge.Hide();
-        }
+        HideEdges(0, _edges.Count);
     }
 
     public void Dispose()
@@ -135,9 +137,112 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
     {
         while (_edges.Count < count)
         {
-            _edges.Add(new ActivityEdgeWindow());
+            var edge = new ActivityEdgeWindow(AccentColor);
+            edge.PrepareHandle();
+            _edges.Add(edge);
         }
     }
+
+    private void ShowEdges(Rectangle[] bounds, double opacity)
+    {
+        for (var index = 0; index < bounds.Length; index++)
+        {
+            _edges[index].SetOpacity(opacity);
+        }
+
+        var deferred = BeginDeferWindowPos(bounds.Length);
+        if (deferred != IntPtr.Zero)
+        {
+            for (var index = 0; index < bounds.Length; index++)
+            {
+                var edgeBounds = bounds[index];
+                deferred = DeferWindowPos(
+                    deferred,
+                    _edges[index].WindowHandle,
+                    HwndTopmost,
+                    edgeBounds.Left,
+                    edgeBounds.Top,
+                    edgeBounds.Width,
+                    edgeBounds.Height,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                if (deferred == IntPtr.Zero)
+                {
+                    break;
+                }
+            }
+
+            if (deferred != IntPtr.Zero && EndDeferWindowPos(deferred))
+            {
+                return;
+            }
+        }
+
+        for (var index = 0; index < bounds.Length; index++)
+        {
+            _edges[index].ShowEdge(bounds[index], opacity);
+        }
+    }
+
+    private void HideEdges(int startIndex, int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        var deferred = BeginDeferWindowPos(count);
+        if (deferred != IntPtr.Zero)
+        {
+            for (var index = startIndex; index < startIndex + count; index++)
+            {
+                deferred = DeferWindowPos(
+                    deferred,
+                    _edges[index].WindowHandle,
+                    IntPtr.Zero,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOSIZE |
+                    SWP_NOMOVE |
+                    SWP_NOZORDER |
+                    SWP_NOACTIVATE |
+                    SWP_HIDEWINDOW);
+                if (deferred == IntPtr.Zero)
+                {
+                    break;
+                }
+            }
+
+            if (deferred != IntPtr.Zero && EndDeferWindowPos(deferred))
+            {
+                return;
+            }
+        }
+
+        for (var index = startIndex; index < startIndex + count; index++)
+        {
+            _edges[index].HideEdge();
+        }
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr BeginDeferWindowPos(int windowCount);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr DeferWindowPos(
+        IntPtr deferredWindowPosition,
+        IntPtr windowHandle,
+        IntPtr insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EndDeferWindowPos(IntPtr deferredWindowPosition);
 
     private sealed class ActivityEdgeWindow : Form
     {
@@ -145,14 +250,21 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
         private const int HTTRANSPARENT = -1;
         private const int WS_EX_TRANSPARENT = 0x00000020;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int WS_EX_LAYERED = 0x00080000;
         private const int WS_EX_NOACTIVATE = 0x08000000;
+        private const int SW_HIDE = 0;
+        private const uint LWA_ALPHA = 0x00000002;
         private const uint SWP_NOACTIVATE = 0x0010;
         private const uint SWP_SHOWWINDOW = 0x0040;
         private static readonly IntPtr HwndTopmost = new(-1);
+        private byte? _opacity;
 
-        public ActivityEdgeWindow()
+        public IntPtr WindowHandle => Handle;
+
+        public ActivityEdgeWindow(Color color)
         {
             AutoScaleMode = AutoScaleMode.None;
+            BackColor = color;
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
@@ -166,20 +278,22 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
             get
             {
                 var parameters = base.CreateParams;
-                parameters.ExStyle |= WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW;
+                parameters.ExStyle |= WS_EX_LAYERED |
+                    WS_EX_NOACTIVATE |
+                    WS_EX_TRANSPARENT |
+                    WS_EX_TOOLWINDOW;
                 return parameters;
             }
         }
 
-        public void ShowEdge(Rectangle bounds, Color color, double opacity)
+        public void PrepareHandle()
         {
-            Bounds = bounds;
-            BackColor = color;
-            Opacity = opacity;
-            if (!Visible)
-            {
-                Show();
-            }
+            _ = Handle;
+        }
+
+        public void ShowEdge(Rectangle bounds, double opacity)
+        {
+            SetOpacity(opacity);
 
             _ = SetWindowPos(
                 Handle,
@@ -189,6 +303,28 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
                 bounds.Width,
                 bounds.Height,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+
+        public void SetOpacity(double opacity)
+        {
+            var alpha = (byte)Math.Round(Math.Clamp(opacity, 0, 1) * byte.MaxValue);
+            if (_opacity == alpha)
+            {
+                return;
+            }
+
+            if (SetLayeredWindowAttributes(Handle, 0, alpha, LWA_ALPHA))
+            {
+                _opacity = alpha;
+            }
+        }
+
+        public void HideEdge()
+        {
+            if (IsHandleCreated)
+            {
+                _ = ShowWindow(Handle, SW_HIDE);
+            }
         }
 
         protected override void WndProc(ref Message message)
@@ -201,6 +337,18 @@ internal sealed class MicrophoneActivityOverlay : IDisposable
 
             base.WndProc(ref message);
         }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetLayeredWindowAttributes(
+            IntPtr windowHandle,
+            uint colorKey,
+            byte alpha,
+            uint flags);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ShowWindow(IntPtr windowHandle, int command);
 
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]

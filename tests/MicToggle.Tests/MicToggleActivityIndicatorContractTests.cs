@@ -75,6 +75,25 @@ public sealed class MicToggleActivityIndicatorContractTests
         Assert.Contains("HTTRANSPARENT", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Edge_windows_are_prewarmed_and_use_native_visibility_updates()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "MicToggle",
+            "MicrophoneActivityOverlay.cs"));
+
+        Assert.Contains("edge.PrepareHandle()", source, StringComparison.Ordinal);
+        Assert.Contains("SetLayeredWindowAttributes", source, StringComparison.Ordinal);
+        Assert.Contains("ShowWindow", source, StringComparison.Ordinal);
+        Assert.Contains("BeginDeferWindowPos", source, StringComparison.Ordinal);
+        Assert.Contains("DeferWindowPos", source, StringComparison.Ordinal);
+        Assert.Contains("EndDeferWindowPos", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Show();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("edge.Hide()", source, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -309,7 +309,9 @@ public sealed class ChatGptWindowContractTests
 
         var drain = handler.IndexOf("await DrainMicrophoneStateAsync()", StringComparison.Ordinal);
         var failureCheck = handler.IndexOf("if (failureStatus is not null)", StringComparison.Ordinal);
-        var autoStart = handler.IndexOf("_ = TryAutoStartVoiceModeAsync(core)", StringComparison.Ordinal);
+        var autoStart = handler.IndexOf(
+            "await StartVoiceModeSilentlyAsync(core)",
+            StringComparison.Ordinal);
         Assert.True(drain >= 0 && drain < failureCheck && failureCheck < autoStart);
     }
 
@@ -323,7 +325,7 @@ public sealed class ChatGptWindowContractTests
             "MicToggle",
             "ChatGptWindow.cs"));
         var methodStart = source.IndexOf(
-            "private async Task TryAutoStartVoiceModeAsync",
+            "private async Task<bool> TryAutoStartVoiceModeAsync",
             StringComparison.Ordinal);
         var methodEnd = source.IndexOf(
             "private void DetachWebViewEvents",
@@ -360,6 +362,10 @@ public sealed class ChatGptWindowContractTests
             source,
             StringComparison.Ordinal);
         Assert.Contains(
+            "private const int VoiceIdleRestartIntervalMinutes = 5;",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
             "private readonly System.Windows.Forms.Timer _voiceWatchdogTimer = new()",
             source,
             StringComparison.Ordinal);
@@ -387,9 +393,11 @@ public sealed class ChatGptWindowContractTests
         Assert.Contains("ChatGptVoiceModeAutoStarter.ProbeStateScript", handler, StringComparison.Ordinal);
         Assert.Contains("_voiceWatchdog.Observe", handler, StringComparison.Ordinal);
         Assert.Contains("ChatGptVoiceWatchdogAction.Recover", handler, StringComparison.Ordinal);
-        Assert.Contains("await RecoverVoiceModeSilentlyAsync(core)", handler, StringComparison.Ordinal);
+        Assert.Contains("ChatGptVoiceWatchdogAction.Refresh", handler, StringComparison.Ordinal);
+        Assert.Contains("await RecoverVoiceModeSilentlyAsync(core, forceRestart)", handler, StringComparison.Ordinal);
         Assert.Contains("_voiceWatchdogTimer.Stop()", handler, StringComparison.Ordinal);
         Assert.Contains("RestartVoiceWatchdogTimer()", handler, StringComparison.Ordinal);
+        Assert.Contains("_voiceWatchdog.RecordActivity", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -402,7 +410,7 @@ public sealed class ChatGptWindowContractTests
             "MicToggle",
             "ChatGptWindow.cs"));
         var methodStart = source.IndexOf(
-            "private async Task RecoverVoiceModeAsync",
+            "private async Task<bool> RecoverVoiceModeAsync",
             StringComparison.Ordinal);
         var methodEnd = source.IndexOf(
             "private void DetachWebViewEvents",
@@ -411,16 +419,23 @@ public sealed class ChatGptWindowContractTests
         Assert.True(methodStart >= 0 && methodEnd > methodStart);
         var method = source[methodStart..methodEnd];
 
+        var probe = method.IndexOf("ChatGptVoiceModeAutoStarter.ProbeStateScript", StringComparison.Ordinal);
+        var active = method.IndexOf("ChatGptVoiceModeState.Active", probe, StringComparison.Ordinal);
         var rearm = method.IndexOf("starter.Rearm()", StringComparison.Ordinal);
         var stop = method.IndexOf("ChatGptVoiceModeAutoStarter.TryStopScript", StringComparison.Ordinal);
         var waitForStart = method.IndexOf("WaitForVoiceModeReadyToStartAsync(core)", StringComparison.Ordinal);
         var restart = method.IndexOf("TryAutoStartVoiceModeAsync(core)", StringComparison.Ordinal);
-        Assert.True(rearm >= 0 && rearm < stop && stop < waitForStart && waitForStart < restart);
+        Assert.True(probe >= 0
+            && probe < active
+            && active < rearm
+            && rearm < stop
+            && stop < waitForStart
+            && waitForStart < restart);
         Assert.DoesNotContain("await Task.Delay(500)", method, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Watchdog_recovery_mutes_output_around_the_dom_cycle_then_restores_current_volume()
+    public void Automatic_voice_activation_mutes_new_sessions_until_the_dom_is_active()
     {
         var repositoryRoot = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -429,12 +444,12 @@ public sealed class ChatGptWindowContractTests
             "MicToggle",
             "ChatGptWindow.cs"));
         Assert.Contains(
-            "private const int VoiceRefreshMuteTailMilliseconds = 2000;",
+            "private const int VoiceRefreshMuteTailMilliseconds = 500;",
             source,
             StringComparison.Ordinal);
 
         var handlerStart = source.IndexOf(
-            "private async Task RecoverVoiceModeSilentlyAsync",
+            "private async Task<bool> RunVoiceActivationSilentlyAsync",
             StringComparison.Ordinal);
         var handlerEnd = source.IndexOf(
             "private void RestartVoiceWatchdogTimer",
@@ -443,16 +458,25 @@ public sealed class ChatGptWindowContractTests
         Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
         var handler = source[handlerStart..handlerEnd];
 
+        var gate = handler.IndexOf("await _voiceActivationGate.WaitAsync()", StringComparison.Ordinal);
         var mute = handler.IndexOf("_voiceRefreshMuted = true", StringComparison.Ordinal);
         var forceZero = handler.IndexOf("ApplyOutputVolume(reportErrors: false)", mute, StringComparison.Ordinal);
-        var refresh = handler.IndexOf("await RecoverVoiceModeAsync(core)", forceZero, StringComparison.Ordinal);
-        var tail = handler.IndexOf("Task.Delay(VoiceRefreshMuteTailMilliseconds)", refresh, StringComparison.Ordinal);
-        var unmute = handler.IndexOf("_voiceRefreshMuted = false", tail, StringComparison.Ordinal);
+        var guard = handler.IndexOf("_audioVolumeController.BeginMuteNewSessions()", forceZero, StringComparison.Ordinal);
+        var activate = handler.IndexOf("await activateVoiceMode()", guard, StringComparison.Ordinal);
+        var active = handler.IndexOf("await WaitForVoiceModeActiveAsync(core)", activate, StringComparison.Ordinal);
+        var tail = handler.IndexOf("Task.Delay(VoiceRefreshMuteTailMilliseconds)", active, StringComparison.Ordinal);
+        var disposeGuard = handler.IndexOf("sessionMuteScope?.Dispose()", tail, StringComparison.Ordinal);
+        var unmute = handler.IndexOf("_voiceRefreshMuted = false", disposeGuard, StringComparison.Ordinal);
         var restore = handler.IndexOf("ApplyOutputVolume(reportErrors: false)", unmute, StringComparison.Ordinal);
-        Assert.True(mute >= 0
+        Assert.True(gate >= 0
+            && gate < mute
             && mute < forceZero
-            && forceZero < refresh
-            && refresh < tail
+            && forceZero < guard
+            && guard < activate
+            && activate < active
+            && active < tail
+            && tail < disposeGuard
+            && disposeGuard < unmute
             && tail < unmute
             && unmute < restore);
 
@@ -487,7 +511,46 @@ public sealed class ChatGptWindowContractTests
             "protected override bool ShowWithoutActivation => _hideAfterStartupInitialization;",
             source,
             StringComparison.Ordinal);
-        Assert.Contains("Hide()", source, StringComparison.Ordinal);
+
+        var shownStart = source.IndexOf("Shown += async", StringComparison.Ordinal);
+        var shownEnd = source.IndexOf(
+            "SetStatus(\"Starting ChatGPT...\")",
+            shownStart,
+            StringComparison.Ordinal);
+        Assert.True(shownStart >= 0 && shownEnd > shownStart);
+        var shownHandler = source[shownStart..shownEnd];
+        Assert.DoesNotContain("Hide()", shownHandler, StringComparison.Ordinal);
+        Assert.Contains("CompleteHiddenStartup()", shownHandler, StringComparison.Ordinal);
+
+        var navigationStart = source.IndexOf(
+            "private async void HandleNavigationCompleted",
+            StringComparison.Ordinal);
+        var navigationEnd = source.IndexOf(
+            "private void HandleFrameCreated",
+            navigationStart,
+            StringComparison.Ordinal);
+        Assert.True(navigationStart >= 0 && navigationEnd > navigationStart);
+        var navigationHandler = source[navigationStart..navigationEnd];
+        var autoStart = navigationHandler.IndexOf(
+            "await StartVoiceModeSilentlyAsync(core)",
+            StringComparison.Ordinal);
+        var completeHiddenStartup = navigationHandler.IndexOf(
+            "CompleteHiddenStartup()",
+            StringComparison.Ordinal);
+        Assert.True(autoStart >= 0 && autoStart < completeHiddenStartup);
+
+        var completeStart = source.IndexOf(
+            "private void CompleteHiddenStartup()",
+            StringComparison.Ordinal);
+        var completeEnd = source.IndexOf(
+            "protected override void Dispose",
+            completeStart,
+            StringComparison.Ordinal);
+        Assert.True(completeStart >= 0 && completeEnd > completeStart);
+        var completeMethod = source[completeStart..completeEnd];
+        Assert.Contains("Hide()", completeMethod, StringComparison.Ordinal);
+        Assert.Contains("Opacity = 1", completeMethod, StringComparison.Ordinal);
+        Assert.Contains("ShowInTaskbar = true", completeMethod, StringComparison.Ordinal);
 
         var showStart = source.IndexOf("public void ShowWindow()", StringComparison.Ordinal);
         var showEnd = source.IndexOf("public void ExitApplication()", showStart, StringComparison.Ordinal);

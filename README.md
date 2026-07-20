@@ -16,6 +16,8 @@ subject to the [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/).
 - Starts ChatGPT voice mode automatically when the page exposes the voice button.
 - Checks voice mode every second, immediately restarts it when inactive, and
   recovers a loading screen only after it remains stuck for 45 seconds.
+- Silently reconnects voice mode after five minutes without push-to-talk input,
+  including sessions whose UI still looks active but no longer responds.
 - Uses a dedicated WebView2 profile, so it does not control or depend on Chrome.
 - Controls only MicToggle's WebView audio volume, not the Windows master volume.
 - Runs in the notification area; double-click the tray icon to show the window.

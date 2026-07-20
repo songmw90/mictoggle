@@ -32,6 +32,27 @@ public sealed class WebViewAudioVolumeControllerContractTests
     }
 
     [Fact]
+    public void Activation_scope_mutes_new_process_tree_sessions_from_an_mta_thread()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "MicToggle",
+            "WebViewAudioVolumeController.cs"));
+
+        Assert.Contains("SetApartmentState(ApartmentState.MTA)", source, StringComparison.Ordinal);
+        Assert.Contains("_sessionManager.OnSessionCreated += HandleSessionCreated", source, StringComparison.Ordinal);
+        Assert.Contains("_sessionManager.OnSessionCreated -= HandleSessionCreated", source, StringComparison.Ordinal);
+        Assert.Contains("new AudioSessionControl(newSession)", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "targetProcessIds.Contains((int)session.GetProcessID)",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains("volume.Volume = 0F", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Window_has_a_persistent_output_slider_and_session_refresh_timer()
     {
         var repositoryRoot = FindRepositoryRoot();

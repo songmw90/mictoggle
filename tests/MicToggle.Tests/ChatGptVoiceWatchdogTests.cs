@@ -42,10 +42,45 @@ public sealed class ChatGptVoiceWatchdogTests
         Assert.Equal("None", Observe(watchdog, "Loading", startedAt.AddSeconds(90)));
     }
 
+    [Fact]
+    public void Active_voice_mode_is_force_refreshed_after_five_idle_minutes()
+    {
+        var watchdog = CreateWatchdog();
+        var startedAt = DateTimeOffset.UnixEpoch;
+
+        Assert.Equal("None", Observe(watchdog, "Active", startedAt));
+        Assert.Equal("None", Observe(watchdog, "Active", startedAt.AddMinutes(5).AddTicks(-1)));
+        Assert.Equal("Refresh", Observe(watchdog, "Active", startedAt.AddMinutes(5)));
+        Assert.Equal("Refresh", Observe(watchdog, "Active", startedAt.AddMinutes(5).AddSeconds(1)));
+    }
+
+    [Fact]
+    public void Push_to_talk_activity_delays_the_forced_refresh()
+    {
+        var watchdog = CreateWatchdog();
+        var startedAt = DateTimeOffset.UnixEpoch;
+
+        Assert.Equal("None", Observe(watchdog, "Active", startedAt));
+        RecordActivity(watchdog, startedAt.AddMinutes(4));
+        Assert.Equal("None", Observe(watchdog, "Active", startedAt.AddMinutes(5)));
+        Assert.Equal("Refresh", Observe(watchdog, "Active", startedAt.AddMinutes(9)));
+    }
+
     private static object CreateWatchdog()
     {
         Assert.NotNull(WatchdogType);
-        return Activator.CreateInstance(WatchdogType!, [TimeSpan.FromSeconds(45)])!;
+        return Activator.CreateInstance(
+            WatchdogType!,
+            [TimeSpan.FromSeconds(45), TimeSpan.FromMinutes(5)])!;
+    }
+
+    private static void RecordActivity(object watchdog, DateTimeOffset observedAt)
+    {
+        var method = WatchdogType!.GetMethod(
+            "RecordActivity",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(method);
+        method!.Invoke(watchdog, [observedAt]);
     }
 
     private static string Observe(object watchdog, string stateName, DateTimeOffset observedAt)

@@ -17,7 +17,8 @@ internal sealed class ChatGptWindow : Form
     private const int VoiceModeStartRetryDelayMilliseconds = 250;
     private const int VoiceWatchdogIntervalMilliseconds = 1000;
     private const int VoiceLoadingRecoveryThresholdSeconds = 45;
-    private const int VoiceRefreshMuteTailMilliseconds = 2000;
+    private const int VoiceIdleRestartIntervalMinutes = 5;
+    private const int VoiceRefreshMuteTailMilliseconds = 500;
 
     private static readonly Color WindowBackground = Color.FromArgb(17, 19, 21);
     private static readonly Color HeaderBackground = Color.FromArgb(24, 26, 29);
@@ -102,6 +103,7 @@ internal sealed class ChatGptWindow : Form
     };
     private readonly Icon? _windowIcon;
     private readonly SemaphoreSlim _microphoneStateGate = new(1, 1);
+    private readonly SemaphoreSlim _voiceActivationGate = new(1, 1);
     private readonly ChatGptWindowState _state = new();
     private readonly MicrophoneStateHost _microphoneStateHost = new();
     private readonly ChatGptFrameRegistry _frameRegistry = new();
@@ -121,7 +123,8 @@ internal sealed class ChatGptWindow : Form
         Interval = VoiceWatchdogIntervalMilliseconds,
     };
     private readonly ChatGptVoiceWatchdog _voiceWatchdog = new(
-        TimeSpan.FromSeconds(VoiceLoadingRecoveryThresholdSeconds));
+        TimeSpan.FromSeconds(VoiceLoadingRecoveryThresholdSeconds),
+        TimeSpan.FromMinutes(VoiceIdleRestartIntervalMinutes));
 
     private ChatGptVoiceModeAutoStarter _voiceModeAutoStarter = new();
     private WebView2? _webView;
@@ -174,17 +177,11 @@ internal sealed class ChatGptWindow : Form
         FormClosing += HandleFormClosing;
         Shown += async (_, _) =>
         {
-            if (_webView is not null)
+            var initialized = _webView is not null
+                && await InitializeWebViewAsync(_webView);
+            if (!initialized)
             {
-                await InitializeWebViewAsync(_webView);
-            }
-
-            if (_hideAfterStartupInitialization)
-            {
-                _hideAfterStartupInitialization = false;
-                Hide();
-                Opacity = 1;
-                ShowInTaskbar = true;
+                CompleteHiddenStartup();
             }
         };
 
@@ -200,6 +197,19 @@ internal sealed class ChatGptWindow : Form
     }
 
     protected override bool ShowWithoutActivation => _hideAfterStartupInitialization;
+
+    private void CompleteHiddenStartup()
+    {
+        if (!_hideAfterStartupInitialization)
+        {
+            return;
+        }
+
+        _hideAfterStartupInitialization = false;
+        Hide();
+        Opacity = 1;
+        ShowInTaskbar = true;
+    }
 
     protected override void Dispose(bool disposing)
     {
@@ -473,6 +483,7 @@ internal sealed class ChatGptWindow : Form
 
     private Task ApplyMicrophoneStateAsync(bool enabled)
     {
+        _voiceWatchdog.RecordActivity(DateTimeOffset.UtcNow);
         UpdatePttIndicator(enabled);
 
         var webView = _webView;
@@ -631,12 +642,16 @@ internal sealed class ChatGptWindow : Form
 
             if (core is not null)
             {
-                _ = TryAutoStartVoiceModeAsync(core);
+                await StartVoiceModeSilentlyAsync(core);
             }
         }
         catch (Exception ex)
         {
             SetStatus($"Navigation handling failed: {ex.Message}");
+        }
+        finally
+        {
+            CompleteHiddenStartup();
         }
     }
 
@@ -948,12 +963,12 @@ internal sealed class ChatGptWindow : Form
         return replacement;
     }
 
-    private async Task TryAutoStartVoiceModeAsync(CoreWebView2 core)
+    private async Task<bool> TryAutoStartVoiceModeAsync(CoreWebView2 core)
     {
         var starter = _voiceModeAutoStarter;
         if (!starter.TryBegin())
         {
-            return;
+            return false;
         }
 
         var started = false;
@@ -967,7 +982,7 @@ internal sealed class ChatGptWindow : Form
                 || _state.NavigationInProgress
                 || !ChatGptOriginPolicy.AllowsMicrophone(core.Source))
             {
-                return;
+                return false;
             }
 
             SetStatus("Starting voice mode...");
@@ -981,7 +996,7 @@ internal sealed class ChatGptWindow : Form
                     || _state.NavigationInProgress
                     || !ChatGptOriginPolicy.AllowsMicrophone(core.Source))
                 {
-                    return;
+                    return false;
                 }
 
                 var result = await core.ExecuteScriptAsync(
@@ -990,13 +1005,14 @@ internal sealed class ChatGptWindow : Form
                 {
                     started = true;
                     SetStatus("Voice mode starting...");
-                    return;
+                    return true;
                 }
 
                 await Task.Delay(VoiceModeStartRetryDelayMilliseconds);
             }
 
             SetStatus("ChatGPT ready. Voice mode was not available.");
+            return false;
         }
         catch (Exception ex)
         {
@@ -1008,6 +1024,8 @@ internal sealed class ChatGptWindow : Form
             {
                 SetStatus($"Voice mode start failed: {ex.Message}");
             }
+
+            return false;
         }
         finally
         {
@@ -1030,10 +1048,22 @@ internal sealed class ChatGptWindow : Form
             var result = await core.ExecuteScriptAsync(
                 ChatGptVoiceModeAutoStarter.ProbeStateScript);
             var state = ChatGptVoiceModeAutoStarter.ReadVoiceModeState(result);
-            if (_voiceWatchdog.Observe(state, DateTimeOffset.UtcNow)
-                == ChatGptVoiceWatchdogAction.Recover)
+            var observedAt = DateTimeOffset.UtcNow;
+            if (_microphoneStateHost.Enabled)
             {
-                await RecoverVoiceModeSilentlyAsync(core);
+                _voiceWatchdog.RecordActivity(observedAt);
+            }
+
+            var action = _voiceWatchdog.Observe(state, observedAt);
+            if (action is ChatGptVoiceWatchdogAction.Recover
+                or ChatGptVoiceWatchdogAction.Refresh)
+            {
+                var forceRestart = action == ChatGptVoiceWatchdogAction.Refresh;
+                var recovered = await RecoverVoiceModeSilentlyAsync(core, forceRestart);
+                if (recovered || !forceRestart)
+                {
+                    _voiceWatchdog.RecordActivity(DateTimeOffset.UtcNow);
+                }
             }
         }
         catch (Exception ex)
@@ -1050,24 +1080,91 @@ internal sealed class ChatGptWindow : Form
         }
     }
 
-    private async Task RecoverVoiceModeSilentlyAsync(CoreWebView2 core)
+    private Task<bool> StartVoiceModeSilentlyAsync(CoreWebView2 core)
     {
+        return RunVoiceActivationSilentlyAsync(
+            core,
+            () => TryAutoStartVoiceModeAsync(core));
+    }
+
+    private Task<bool> RecoverVoiceModeSilentlyAsync(
+        CoreWebView2 core,
+        bool forceRestart)
+    {
+        return RunVoiceActivationSilentlyAsync(
+            core,
+            () => RecoverVoiceModeAsync(core, forceRestart));
+    }
+
+    private async Task<bool> RunVoiceActivationSilentlyAsync(
+        CoreWebView2 core,
+        Func<Task<bool>> activateVoiceMode)
+    {
+        await _voiceActivationGate.WaitAsync();
         var mutedForRefresh = false;
+        IDisposable? sessionMuteScope = null;
         try
         {
             _voiceRefreshMuted = true;
             mutedForRefresh = true;
             ApplyOutputVolume(reportErrors: false);
-            await RecoverVoiceModeAsync(core);
-            await Task.Delay(VoiceRefreshMuteTailMilliseconds);
+            try
+            {
+                sessionMuteScope = _audioVolumeController.BeginMuteNewSessions();
+            }
+            catch
+            {
+                // WebView muting and periodic session volume enforcement remain as fallbacks.
+            }
+
+            var started = await activateVoiceMode();
+            if (started)
+            {
+                await WaitForVoiceModeActiveAsync(core);
+                await Task.Delay(VoiceRefreshMuteTailMilliseconds);
+            }
+
+            return started;
         }
         finally
         {
+            try
+            {
+                sessionMuteScope?.Dispose();
+            }
+            catch
+            {
+                // Always restore the user's configured volume even if COM cleanup fails.
+            }
+
             if (mutedForRefresh)
             {
                 _voiceRefreshMuted = false;
                 ApplyOutputVolume(reportErrors: false);
             }
+
+            _voiceActivationGate.Release();
+        }
+    }
+
+    private async Task WaitForVoiceModeActiveAsync(CoreWebView2 core)
+    {
+        for (var attempt = 0; attempt < VoiceModeStartAttempts; attempt++)
+        {
+            if (!IsCurrentVoiceCore(core))
+            {
+                return;
+            }
+
+            var result = await core.ExecuteScriptAsync(
+                ChatGptVoiceModeAutoStarter.ProbeStateScript);
+            if (ChatGptVoiceModeAutoStarter.ReadVoiceModeState(result)
+                == ChatGptVoiceModeState.Active)
+            {
+                return;
+            }
+
+            await Task.Delay(VoiceModeStartRetryDelayMilliseconds);
         }
     }
 
@@ -1114,14 +1211,32 @@ internal sealed class ChatGptWindow : Form
             && ChatGptOriginPolicy.AllowsMicrophone(core.Source);
     }
 
-    private async Task RecoverVoiceModeAsync(CoreWebView2 core)
+    private async Task<bool> RecoverVoiceModeAsync(
+        CoreWebView2 core,
+        bool forceRestart)
     {
         try
         {
             var starter = _voiceModeAutoStarter;
-            if (!IsCurrentVoiceCore(core) || !starter.Rearm())
+            if (!IsCurrentVoiceCore(core))
             {
-                return;
+                return false;
+            }
+
+            if (!forceRestart)
+            {
+                var currentResult = await core.ExecuteScriptAsync(
+                    ChatGptVoiceModeAutoStarter.ProbeStateScript);
+                if (ChatGptVoiceModeAutoStarter.ReadVoiceModeState(currentResult)
+                    == ChatGptVoiceModeState.Active)
+                {
+                    return false;
+                }
+            }
+
+            if (!starter.Rearm())
+            {
+                return false;
             }
 
             SetStatus("Restoring voice mode...");
@@ -1135,15 +1250,15 @@ internal sealed class ChatGptWindow : Form
                     SetStatus("Voice mode recovery did not reach the start screen.");
                 }
 
-                return;
+                return false;
             }
 
             if (!IsCurrentVoiceCore(core))
             {
-                return;
+                return false;
             }
 
-            await TryAutoStartVoiceModeAsync(core);
+            return await TryAutoStartVoiceModeAsync(core);
         }
         catch (Exception ex)
         {
@@ -1151,6 +1266,8 @@ internal sealed class ChatGptWindow : Form
             {
                 SetStatus($"Voice mode recovery failed: {ex.Message}");
             }
+
+            return false;
         }
     }
 

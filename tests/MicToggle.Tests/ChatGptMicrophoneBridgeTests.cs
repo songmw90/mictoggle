@@ -41,11 +41,12 @@ public sealed class ChatGptMicrophoneBridgeTests
         const vm = require('node:vm');
         const payload = JSON.parse(Buffer.from(process.argv[1], 'base64').toString('utf8'));
 
-        function createTrack() {
+        function createTrack(initialEnabled = true) {
             const endedListeners = [];
             return {
+                kind: 'audio',
                 readyState: 'live',
-                enabled: true,
+                enabled: initialEnabled,
                 addEventListener(type, listener) {
                     if (type === 'ended') {
                         endedListeners.push(listener);
@@ -60,6 +61,9 @@ public sealed class ChatGptMicrophoneBridgeTests
                 },
                 endedListenerCount() {
                     return endedListeners.length;
+                },
+                clone() {
+                    return createTrack(this.enabled);
                 },
                 stop() {
                     this.readyState = 'ended';
@@ -125,6 +129,12 @@ public sealed class ChatGptMicrophoneBridgeTests
                 constructor(tracks) {
                     this.tracks = tracks;
                 }
+                getAudioTracks() {
+                    return this.tracks.filter(track => track.kind === 'audio');
+                }
+                clone() {
+                    return new FakeMediaStream(this.tracks.map(track => track.clone()));
+                }
             }
 
             const mediaDevices = {
@@ -179,6 +189,7 @@ public sealed class ChatGptMicrophoneBridgeTests
 
             return {
                 context,
+                createStream(tracks) { return new FakeMediaStream(tracks); },
                 intervals,
                 messages,
                 streams,
@@ -377,6 +388,28 @@ public sealed class ChatGptMicrophoneBridgeTests
                 pruneFrame.closedAudioContextCount,
                 1,
                 'pruning an ended track must close its audio meter');
+
+            const cloneHostState = { Enabled: true };
+            const cloneFrame = createRuntime('https://chatgpt.com/c/clone', cloneHostState);
+            const cloneSourceTrack = createTrack();
+            cloneFrame.streams.push(cloneFrame.createStream([cloneSourceTrack]));
+            const cloneSourceStream = await cloneFrame.mediaDevices.getUserMedia({ audio: true });
+            const directClone = cloneSourceTrack.clone();
+            const streamClone = cloneSourceStream.clone();
+            const streamCloneTrack = streamClone.getAudioTracks()[0];
+            assert.equal(directClone.enabled, true);
+            assert.equal(streamCloneTrack.enabled, true);
+
+            cloneHostState.Enabled = false;
+            cloneFrame.tick(50);
+            assert.equal(
+                directClone.enabled,
+                false,
+                'push-to-talk release must mute a directly cloned microphone track');
+            assert.equal(
+                streamCloneTrack.enabled,
+                false,
+                'push-to-talk release must mute tracks created by cloning the microphone stream');
 
             for (const origin of [
                 'http://chatgpt.com/',

@@ -14,6 +14,7 @@ internal static class ChatGptMicrophoneBridge
             }
 
             const tracks = new Set();
+            const streams = new WeakSet();
             const meters = new Map();
             let enabled = false;
             let tearingDown = false;
@@ -185,13 +186,39 @@ internal static class ChatGptMicrophoneBridge
                 track.addEventListener("ended", () => {
                     removeTrack(track);
                 }, { once: true });
+
+                if (typeof track.clone === "function") {
+                    const originalClone = track.clone.bind(track);
+                    track.clone = (...args) => {
+                        const clonedTrack = originalClone(...args);
+                        registerTrack(clonedTrack);
+                        postStatus();
+                        return clonedTrack;
+                    };
+                }
+            };
+            const registerStream = stream => {
+                if ((typeof stream !== "object" && typeof stream !== "function")
+                    || stream === null
+                    || streams.has(stream)) {
+                    return stream;
+                }
+
+                streams.add(stream);
+                stream.getAudioTracks?.().forEach(registerTrack);
+                if (typeof stream.clone === "function") {
+                    const originalClone = stream.clone.bind(stream);
+                    stream.clone = (...args) => registerStream(originalClone(...args));
+                }
+
+                return stream;
             };
             const mediaDevices = navigator.mediaDevices;
             if (typeof mediaDevices?.getUserMedia === "function") {
                 const originalGetUserMedia = mediaDevices.getUserMedia.bind(mediaDevices);
                 mediaDevices.getUserMedia = async constraints => {
                     const stream = await originalGetUserMedia(constraints);
-                    stream.getAudioTracks().forEach(registerTrack);
+                    registerStream(stream);
                     postStatus();
                     return stream;
                 };

@@ -2,6 +2,11 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.15 - 2026-07-21
+
+- Tracks microphone streams and audio tracks cloned by the ChatGPT page.
+- Mutes cloned microphone tracks when push-to-talk is released.
+
 ## 0.1.14 - 2026-07-21
 
 - Recovers automatically when an OpenAI ChatGPT gateway redirect fails.

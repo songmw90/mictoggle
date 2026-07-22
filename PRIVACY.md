@@ -40,7 +40,10 @@ input events. It does not record, persist, suppress, or transmit keystrokes.
 MicToggle automatically grants WebView2 microphone permission only to HTTPS
 pages on `chatgpt.com` and its subdomains. Its local page bridge tracks the audio
 tracks created by those pages and keeps them disabled unless the push-to-talk
-chord is held. Windows privacy settings and ChatGPT behavior still apply.
+chord is held. As a second local guard, MicToggle mutes the Windows Core Audio
+capture sessions owned by its own process tree while push-to-talk is released.
+It does not mute the system microphone endpoint or another application's audio
+session. Windows privacy settings and ChatGPT behavior still apply.
 
 ## Page integration
 

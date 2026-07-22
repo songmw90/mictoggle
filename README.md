@@ -22,6 +22,8 @@ subject to the [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/).
 - Silently reconnects voice mode after five minutes without push-to-talk input,
   including sessions whose UI still looks active but no longer responds.
 - Uses a dedicated WebView2 profile, so it does not control or depend on Chrome.
+- Mutes only MicToggle's own Windows capture sessions when push-to-talk is
+  released.
 - Controls only MicToggle's WebView audio volume, not the Windows master volume.
 - Runs in the notification area; double-click the tray icon to show the window.
 - Supports `--startup` to initialize directly in the notification area without showing the window.

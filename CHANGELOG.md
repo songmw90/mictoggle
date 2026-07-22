@@ -2,6 +2,12 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.16 - 2026-07-22
+
+- Mutes only MicToggle's Windows capture sessions whenever push-to-talk is released.
+- Applies the current push-to-talk state to newly created WebView2 capture sessions.
+- Prevents a stale microphone-enable transition from winning after the keys are released.
+
 ## 0.1.15 - 2026-07-21
 
 - Tracks microphone streams and audio tracks cloned by the ChatGPT page.

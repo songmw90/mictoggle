@@ -103,14 +103,18 @@ public sealed class ChatGptWindowContractTests
             StringComparison.Ordinal);
         var setterEnd = source.IndexOf("public void ShowWindow", setterStart, StringComparison.Ordinal);
         var setter = source[setterStart..setterEnd];
-        var hostUpdate = setter.IndexOf(
-            "_microphoneStateHost.SetEnabled(enabled)",
-            StringComparison.Ordinal);
         var desiredUpdate = setter.IndexOf(
             "_state.SetDesiredMicrophoneEnabled(enabled)",
             StringComparison.Ordinal);
+        var releaseGuard = setter.IndexOf("if (!enabled)", StringComparison.Ordinal);
+        var hostUpdate = setter.IndexOf(
+            "_microphoneStateHost.SetEnabled(false)",
+            StringComparison.Ordinal);
         var drain = setter.IndexOf("DrainMicrophoneStateAsync()", StringComparison.Ordinal);
-        Assert.True(hostUpdate >= 0 && hostUpdate < desiredUpdate && desiredUpdate < drain);
+        Assert.True(desiredUpdate >= 0
+            && desiredUpdate < releaseGuard
+            && releaseGuard < hostUpdate
+            && hostUpdate < drain);
 
         var initializeStart = source.IndexOf(
             "private async Task<bool> InitializeWebViewAsync",

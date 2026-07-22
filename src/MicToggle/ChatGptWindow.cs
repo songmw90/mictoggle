@@ -115,6 +115,7 @@ internal sealed class ChatGptWindow : Form
     private readonly Dictionary<uint, CoreWebView2Frame> _frames = [];
     private readonly Dictionary<ulong, string> _topLevelNavigationUris = [];
     private readonly WebViewAudioVolumeController _audioVolumeController = new(Environment.ProcessId);
+    private readonly WebViewMicrophoneSessionController _microphoneSessionController = new(Environment.ProcessId);
     private readonly OutputVolumeStore _outputVolumeStore = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "MicToggle",
@@ -269,6 +270,9 @@ internal sealed class ChatGptWindow : Form
     {
         if (disposing)
         {
+            _microphoneStateHost.SetEnabled(false);
+            _state.SetDesiredMicrophoneEnabled(false);
+            _microphoneSessionController.Dispose();
             _audioVolumeRefreshTimer.Stop();
             _audioVolumeRefreshTimer.Dispose();
             _voiceWatchdogTimer.Stop();
@@ -415,8 +419,13 @@ internal sealed class ChatGptWindow : Form
 
     public Task SetMicrophoneEnabledAsync(bool enabled)
     {
-        _microphoneStateHost.SetEnabled(enabled);
         _state.SetDesiredMicrophoneEnabled(enabled);
+        if (!enabled)
+        {
+            _microphoneStateHost.SetEnabled(false);
+            _microphoneSessionController.RequestMuted(true);
+        }
+
         return DrainMicrophoneStateAsync();
     }
 
@@ -449,6 +458,7 @@ internal sealed class ChatGptWindow : Form
 
         _microphoneStateHost.SetEnabled(false);
         _state.SetDesiredMicrophoneEnabled(false);
+        _microphoneSessionController.RequestMuted(true);
         _allowClose = true;
         Close();
     }
@@ -516,6 +526,13 @@ internal sealed class ChatGptWindow : Form
             while (true)
             {
                 var desired = _state.GetDesiredMicrophoneState();
+                await _microphoneSessionController.SetMutedAsync(!desired.Enabled);
+                if (!_state.IsCurrentDesiredState(desired.Version))
+                {
+                    continue;
+                }
+
+                _microphoneStateHost.SetEnabled(desired.Enabled);
                 await RunOnUiThreadAsync(() => ApplyMicrophoneStateAsync(desired.Enabled));
 
                 if (_state.IsCurrentDesiredState(desired.Version))

@@ -99,7 +99,7 @@ public sealed class ChatGptWindowContractTests
         Assert.Contains("frame.PostWebMessageAsJson", source, StringComparison.Ordinal);
 
         var setterStart = source.IndexOf(
-            "public Task SetMicrophoneEnabledAsync",
+            "public async Task SetMicrophoneEnabledAsync",
             StringComparison.Ordinal);
         var setterEnd = source.IndexOf("public void ShowWindow", setterStart, StringComparison.Ordinal);
         var setter = source[setterStart..setterEnd];
@@ -462,7 +462,7 @@ public sealed class ChatGptWindowContractTests
     }
 
     [Fact]
-    public void Automatic_voice_activation_keeps_new_sessions_muted_while_audio_settles()
+    public void Automatic_voice_activation_stays_muted_until_a_real_ptt_turn_finishes()
     {
         var repositoryRoot = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -470,8 +470,9 @@ public sealed class ChatGptWindowContractTests
             "src",
             "MicToggle",
             "ChatGptWindow.cs"));
+        Assert.DoesNotContain("VoiceRefreshMuteTailMilliseconds", source, StringComparison.Ordinal);
         Assert.Contains(
-            "private const int VoiceRefreshMuteTailMilliseconds = 2000;",
+            "private IDisposable? _automaticVoiceOutputMuteScope;",
             source,
             StringComparison.Ordinal);
 
@@ -488,7 +489,10 @@ public sealed class ChatGptWindowContractTests
         var gate = handler.IndexOf("await _voiceActivationGate.WaitAsync()", StringComparison.Ordinal);
         var mute = handler.IndexOf("_voiceRefreshMuted = true", StringComparison.Ordinal);
         var forceZero = handler.IndexOf("ApplyOutputVolume(reportErrors: false)", mute, StringComparison.Ordinal);
-        var guard = handler.IndexOf("_audioVolumeController.BeginMuteNewSessions()", forceZero, StringComparison.Ordinal);
+        var guard = handler.IndexOf(
+            "_automaticVoiceOutputMuteScope ??= _audioVolumeController.BeginMuteNewSessions()",
+            forceZero,
+            StringComparison.Ordinal);
         var present = handler.IndexOf(
             "BeginHiddenVoiceRefreshPresentation()",
             guard,
@@ -496,14 +500,10 @@ public sealed class ChatGptWindowContractTests
         Assert.True(present >= 0, "Hidden Voice refresh presentation was not started.");
         var activate = handler.IndexOf("await activateVoiceMode()", present, StringComparison.Ordinal);
         var active = handler.IndexOf("await WaitForVoiceModeActiveAsync(core)", activate, StringComparison.Ordinal);
-        var tail = handler.IndexOf("Task.Delay(VoiceRefreshMuteTailMilliseconds)", active, StringComparison.Ordinal);
         var hide = handler.IndexOf(
             "EndHiddenVoiceRefreshPresentation()",
-            tail,
+            active,
             StringComparison.Ordinal);
-        var disposeGuard = handler.IndexOf("sessionMuteScope?.Dispose()", hide, StringComparison.Ordinal);
-        var unmute = handler.IndexOf("_voiceRefreshMuted = false", disposeGuard, StringComparison.Ordinal);
-        var restore = handler.IndexOf("ApplyOutputVolume(reportErrors: false)", unmute, StringComparison.Ordinal);
         Assert.True(gate >= 0
             && gate < mute
             && mute < forceZero
@@ -511,12 +511,60 @@ public sealed class ChatGptWindowContractTests
             && guard < present
             && present < activate
             && activate < active
-            && active < tail
-            && tail < hide
-            && hide < disposeGuard
-            && disposeGuard < unmute
-            && tail < unmute
-            && unmute < restore);
+            && active < hide);
+        Assert.DoesNotContain("_voiceRefreshMuted = false", handler, StringComparison.Ordinal);
+        Assert.DoesNotContain("sessionMuteScope?.Dispose()", handler, StringComparison.Ordinal);
+
+        var setterStart = source.IndexOf(
+            "public async Task SetMicrophoneEnabledAsync",
+            StringComparison.Ordinal);
+        var setterEnd = source.IndexOf("public void ShowWindow", setterStart, StringComparison.Ordinal);
+        Assert.True(setterStart >= 0 && setterEnd > setterStart);
+        var setter = source[setterStart..setterEnd];
+        var drain = setter.IndexOf("await DrainMicrophoneStateAsync()", StringComparison.Ordinal);
+        var released = setter.IndexOf(
+            "if (!enabled && !_state.DesiredMicrophoneEnabled)",
+            drain,
+            StringComparison.Ordinal);
+        var restoreAfterRelease = setter.IndexOf(
+            "await RestoreOutputAfterPttReleaseAsync()",
+            released,
+            StringComparison.Ordinal);
+        Assert.True(drain >= 0 && drain < released && released < restoreAfterRelease);
+
+        var restoreStart = source.IndexOf(
+            "private async Task RestoreOutputAfterPttReleaseAsync()",
+            StringComparison.Ordinal);
+        var restoreEnd = source.IndexOf(
+            "private async Task<bool> TryAutoStartVoiceModeAsync",
+            restoreStart,
+            StringComparison.Ordinal);
+        Assert.True(restoreStart >= 0 && restoreEnd > restoreStart);
+        var restoreMethod = source[restoreStart..restoreEnd];
+        var restoreGate = restoreMethod.IndexOf(
+            "await _voiceActivationGate.WaitAsync()",
+            StringComparison.Ordinal);
+        var disposeScope = restoreMethod.IndexOf(
+            "_automaticVoiceOutputMuteScope?.Dispose()",
+            restoreGate,
+            StringComparison.Ordinal);
+        var clearScope = restoreMethod.IndexOf(
+            "_automaticVoiceOutputMuteScope = null",
+            disposeScope,
+            StringComparison.Ordinal);
+        var unmute = restoreMethod.IndexOf(
+            "_voiceRefreshMuted = false",
+            clearScope,
+            StringComparison.Ordinal);
+        var restoreVolume = restoreMethod.IndexOf(
+            "ApplyOutputVolume(reportErrors: false)",
+            unmute,
+            StringComparison.Ordinal);
+        Assert.True(restoreGate >= 0
+            && restoreGate < disposeScope
+            && disposeScope < clearScope
+            && clearScope < unmute
+            && unmute < restoreVolume);
 
         var applyStart = source.IndexOf(
             "private void ApplyOutputVolume",

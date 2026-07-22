@@ -2,6 +2,13 @@
 
 All notable changes to MicToggle will be documented in this file.
 
+## 0.1.17 - 2026-07-23
+
+- Keeps automatic Voice startup and five-minute refresh audio muted until the
+  user completes the next push-to-talk turn.
+- Keeps the render-session mute guard active so delayed or newly created
+  WebView2 audio sessions cannot briefly play after an automatic refresh.
+
 ## 0.1.16 - 2026-07-22
 
 - Mutes only MicToggle's Windows capture sessions whenever push-to-talk is released.

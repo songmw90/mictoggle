@@ -63,7 +63,7 @@ public sealed class WebViewMicrophoneSessionControllerContractTests
             StringComparison.Ordinal);
 
         var setterStart = source.IndexOf(
-            "public Task SetMicrophoneEnabledAsync",
+            "public async Task SetMicrophoneEnabledAsync",
             StringComparison.Ordinal);
         var setterEnd = source.IndexOf("public void ShowWindow", setterStart, StringComparison.Ordinal);
         Assert.True(setterStart >= 0 && setterEnd > setterStart);

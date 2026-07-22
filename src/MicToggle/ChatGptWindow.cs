@@ -18,7 +18,6 @@ internal sealed class ChatGptWindow : Form
     private const int VoiceWatchdogIntervalMilliseconds = 1000;
     private const int VoiceLoadingRecoveryThresholdSeconds = 45;
     private const int VoiceIdleRestartIntervalMinutes = 5;
-    private const int VoiceRefreshMuteTailMilliseconds = 2000;
     private const int HiddenVoicePresentationAttempts = 10;
     private const int HiddenVoicePresentationDelayMilliseconds = 50;
     private const int NavigationRetryInitialDelaySeconds = 1;
@@ -141,6 +140,7 @@ internal sealed class ChatGptWindow : Form
     private bool _hideAfterStartupInitialization;
     private bool _hiddenVoiceRefreshPresentationActive;
     private bool _voiceRefreshMuted;
+    private IDisposable? _automaticVoiceOutputMuteScope;
 
     public event EventHandler<MicrophoneActivityEventArgs>? MicrophoneActivityChanged;
 
@@ -273,6 +273,16 @@ internal sealed class ChatGptWindow : Form
             _microphoneStateHost.SetEnabled(false);
             _state.SetDesiredMicrophoneEnabled(false);
             _microphoneSessionController.Dispose();
+            try
+            {
+                _automaticVoiceOutputMuteScope?.Dispose();
+            }
+            catch
+            {
+                // Core Audio may already be unavailable during process shutdown.
+            }
+
+            _automaticVoiceOutputMuteScope = null;
             _audioVolumeRefreshTimer.Stop();
             _audioVolumeRefreshTimer.Dispose();
             _voiceWatchdogTimer.Stop();
@@ -417,7 +427,7 @@ internal sealed class ChatGptWindow : Form
         return button;
     }
 
-    public Task SetMicrophoneEnabledAsync(bool enabled)
+    public async Task SetMicrophoneEnabledAsync(bool enabled)
     {
         _state.SetDesiredMicrophoneEnabled(enabled);
         if (!enabled)
@@ -426,7 +436,11 @@ internal sealed class ChatGptWindow : Form
             _microphoneSessionController.RequestMuted(true);
         }
 
-        return DrainMicrophoneStateAsync();
+        await DrainMicrophoneStateAsync();
+        if (!enabled && !_state.DesiredMicrophoneEnabled)
+        {
+            await RestoreOutputAfterPttReleaseAsync();
+        }
     }
 
     public void ShowWindow()
@@ -582,6 +596,35 @@ internal sealed class ChatGptWindow : Form
 
         BroadcastToFrames(messageJson);
         return Task.CompletedTask;
+    }
+
+    private async Task RestoreOutputAfterPttReleaseAsync()
+    {
+        await _voiceActivationGate.WaitAsync();
+        try
+        {
+            if (!_voiceRefreshMuted && _automaticVoiceOutputMuteScope is null)
+            {
+                return;
+            }
+
+            try
+            {
+                _automaticVoiceOutputMuteScope?.Dispose();
+            }
+            catch
+            {
+                // Restore the configured volume even if COM cleanup fails.
+            }
+
+            _automaticVoiceOutputMuteScope = null;
+            _voiceRefreshMuted = false;
+            ApplyOutputVolume(reportErrors: false);
+        }
+        finally
+        {
+            _voiceActivationGate.Release();
+        }
     }
 
     private Task RunOnUiThreadAsync(Func<Task> action)
@@ -1219,17 +1262,14 @@ internal sealed class ChatGptWindow : Form
         Func<Task<bool>> activateVoiceMode)
     {
         await _voiceActivationGate.WaitAsync();
-        var mutedForRefresh = false;
         var presentedForHiddenRefresh = false;
-        IDisposable? sessionMuteScope = null;
         try
         {
             _voiceRefreshMuted = true;
-            mutedForRefresh = true;
             ApplyOutputVolume(reportErrors: false);
             try
             {
-                sessionMuteScope = _audioVolumeController.BeginMuteNewSessions();
+                _automaticVoiceOutputMuteScope ??= _audioVolumeController.BeginMuteNewSessions();
             }
             catch
             {
@@ -1246,7 +1286,6 @@ internal sealed class ChatGptWindow : Form
             if (started)
             {
                 await WaitForVoiceModeActiveAsync(core);
-                await Task.Delay(VoiceRefreshMuteTailMilliseconds);
             }
 
             return started;
@@ -1256,21 +1295,6 @@ internal sealed class ChatGptWindow : Form
             if (presentedForHiddenRefresh)
             {
                 EndHiddenVoiceRefreshPresentation();
-            }
-
-            try
-            {
-                sessionMuteScope?.Dispose();
-            }
-            catch
-            {
-                // Always restore the user's configured volume even if COM cleanup fails.
-            }
-
-            if (mutedForRefresh)
-            {
-                _voiceRefreshMuted = false;
-                ApplyOutputVolume(reportErrors: false);
             }
 
             _voiceActivationGate.Release();
